@@ -51,10 +51,7 @@ class GovernorController:
     def _apply_range(self, min_mhz: int, max_mhz: int, throttle: int, recovery: int) -> CommandResult:
         min_mhz, max_mhz = validate_frequency_range(min_mhz, max_mhz)
         throttle, recovery = validate_temperature(throttle, recovery)
-        range_result = self._call("SetRange", "uu", min_mhz, max_mhz)
-        if not range_result.ok:
-            return range_result
-        return self._call("SetTemperatureThresholds", "uu", throttle, recovery)
+        return self._call("SetTuning", "uuuu", min_mhz, max_mhz, throttle, recovery)
 
     def apply_runtime(self, preset_key: str, throttle: int, recovery: int) -> CommandResult:
         preset = get_preset(preset_key)
@@ -90,13 +87,20 @@ class PrivilegedRunner:
         )
         return self._json_result(result)
 
+    def _helper_command(self, action: str, *args: str) -> list[str]:
+        return [
+            "pkexec",
+            "python3",
+            str(self.project_root / "bc250_privileged.py"),
+            action,
+            *args,
+        ]
+
     def save_settings(self, preset_key: str, throttle: int, recovery: int) -> tuple[CommandResult, dict]:
         get_preset(preset_key)
         validate_temperature(throttle, recovery)
         result = self.runner(
-            [
-                "pkexec",
-                "/usr/local/libexec/bc250-custom-pannel-privileged",
+            self._helper_command(
                 "save-governor",
                 "--preset",
                 preset_key,
@@ -104,7 +108,7 @@ class PrivilegedRunner:
                 str(throttle),
                 "--recovery",
                 str(recovery),
-            ]
+            )
         )
         return self._json_result(result)
 
@@ -118,9 +122,7 @@ class PrivilegedRunner:
         min_mhz, max_mhz = validate_frequency_range(min_mhz, max_mhz)
         validate_temperature(throttle, recovery)
         result = self.runner(
-            [
-                "pkexec",
-                "/usr/local/libexec/bc250-custom-pannel-privileged",
+            self._helper_command(
                 "save-governor-custom",
                 "--min-mhz",
                 str(min_mhz),
@@ -130,37 +132,31 @@ class PrivilegedRunner:
                 str(throttle),
                 "--recovery",
                 str(recovery),
-            ]
+            )
         )
         return self._json_result(result)
 
     def save_cu(self, cu_count: int) -> tuple[CommandResult, dict]:
         result = self.runner(
-            [
-                "pkexec",
-                "/usr/local/libexec/bc250-custom-pannel-privileged",
+            self._helper_command(
                 "save-cu",
                 "--cu",
                 str(cu_count),
-            ]
+            )
         )
         return self._json_result(result)
 
     def unlock_cpu(self) -> tuple[CommandResult, dict]:
-        result = self.runner(
-            ["pkexec", "/usr/local/libexec/bc250-custom-pannel-privileged", "unlock-cpu"]
-        )
+        result = self.runner(self._helper_command("unlock-cpu"))
         return self._json_result(result)
 
     def set_cpu_mode(self, enabled: bool) -> tuple[CommandResult, dict]:
         result = self.runner(
-            [
-                "pkexec",
-                "/usr/local/libexec/bc250-custom-pannel-privileged",
+            self._helper_command(
                 "set-cpu-mode",
                 "--enabled",
                 "on" if enabled else "off",
-            ]
+            )
         )
         return self._json_result(result)
 

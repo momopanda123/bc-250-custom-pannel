@@ -22,9 +22,9 @@ PRESETS: dict[str, PerformancePreset] = {
 }
 
 CU_MASKS: dict[int, int] = {24: 0x07, 32: 0x0F, 40: 0x1F}
-MIN_GPU_MHZ = 500
-MAX_GPU_MHZ = 1800
-MIN_RANGE_GAP_MHZ = 100
+UINT32_MAX = (1 << 32) - 1
+MIN_TEMPERATURE_C = 0
+MAX_TEMPERATURE_C = 255
 
 
 def get_preset(key: str) -> PerformancePreset:
@@ -45,10 +45,9 @@ def cu_mask_csv(cu_count: int) -> str:
 def validate_temperature(throttle: int, recovery: int) -> tuple[int, int]:
     throttle = int(throttle)
     recovery = int(recovery)
-    gap = throttle - recovery
-    if not 80 <= throttle <= 90:
+    if not MIN_TEMPERATURE_C <= throttle <= MAX_TEMPERATURE_C:
         raise MessageError("error.invalid_throttle")
-    if not 5 <= gap <= 15:
+    if not MIN_TEMPERATURE_C <= recovery <= MAX_TEMPERATURE_C:
         raise MessageError("error.invalid_recovery_gap")
     return throttle, recovery
 
@@ -56,10 +55,10 @@ def validate_temperature(throttle: int, recovery: int) -> tuple[int, int]:
 def validate_frequency_range(min_mhz: int, max_mhz: int) -> tuple[int, int]:
     min_mhz = int(min_mhz)
     max_mhz = int(max_mhz)
-    if not MIN_GPU_MHZ <= min_mhz <= MAX_GPU_MHZ:
+    if not 0 <= min_mhz <= UINT32_MAX:
         raise MessageError("error.invalid_frequency_range")
-    if not MIN_GPU_MHZ <= max_mhz <= MAX_GPU_MHZ:
+    if not 0 <= max_mhz <= UINT32_MAX:
         raise MessageError("error.invalid_frequency_range")
-    if max_mhz - min_mhz < MIN_RANGE_GAP_MHZ:
+    if min_mhz and max_mhz and min_mhz > max_mhz:
         raise MessageError("error.invalid_frequency_range")
     return min_mhz, max_mhz

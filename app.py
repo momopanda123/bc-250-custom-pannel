@@ -114,7 +114,8 @@ def check_environment(skip_platform: bool) -> int:
         f"cu-manager={'yes' if report.cu_manager_installed else 'no'}, "
         f"umr={'yes' if report.umr_installed else 'no'}, "
         f"helper={'yes' if report.helper_installed else 'no'}, "
-        f"cpu-mode={'yes' if report.cpu_mode_installed else 'no'}"
+        f"cpu-mode={'yes' if report.cpu_mode_installed else 'no'}, "
+        f"support={'yes' if report.support_installed else 'no'}"
     )
     for error in report.bundle.errors:
         print(f"ERROR: {translator.render(error)}", file=sys.stderr)

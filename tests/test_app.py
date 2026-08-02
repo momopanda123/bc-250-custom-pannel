@@ -8,7 +8,7 @@ from pathlib import Path
 
 from bc250.i18n import Translator
 from bc250.messages import UserMessage
-from bc250.presets import PRESETS
+from bc250.presets import PRESETS, validate_frequency_range, validate_temperature
 
 
 def find_window_method(name):
@@ -52,12 +52,28 @@ class ValueWidget:
         self.value = value
 
 
+class IntegerSpinWidget(ValueWidget):
+    def get_value_as_int(self):
+        return int(self.value)
+
+
+class UnsignedSpinWidget(ValueWidget):
+    def get_value(self):
+        return float(self.value)
+
+    def get_value_as_int(self):
+        raise AssertionError("The signed GTK integer accessor cannot represent the full u32 range")
+
+
 class SelectionWidget:
     def __init__(self, selected):
         self.selected = selected
 
     def set_selected(self, selected):
         self.selected = selected
+
+    def get_selected(self):
+        return self.selected
 
 
 class AppTests(unittest.TestCase):
@@ -146,6 +162,7 @@ class AppTests(unittest.TestCase):
             umr_installed=True,
             helper_installed=True,
             cpu_mode_installed=True,
+            support_installed=True,
         )
         visibility = []
         install = SensitiveWidget()
@@ -175,6 +192,24 @@ class AppTests(unittest.TestCase):
         ]
         self.assertIn("_run_async", calls)
         self.assertNotIn("_confirm", calls)
+
+    def test_successful_component_install_refreshes_compatibility_before_reenabling_controls(self):
+        install_done, _node = load_window_method("_install_done")
+        events = []
+        window = types.SimpleNamespace(
+            _set_controls_sensitive=lambda value: events.append(("sensitive", value)),
+            _show_message=lambda *_args: events.append(("message",)),
+            _refresh_bootstrap=lambda: events.append(("refresh",)),
+            _payload_text=lambda *_args: "installed",
+            translator=types.SimpleNamespace(gettext=lambda key: key),
+        )
+        install_done.__globals__["Gtk"] = types.SimpleNamespace(
+            MessageType=types.SimpleNamespace(INFO="info", ERROR="error")
+        )
+        command = types.SimpleNamespace(ok=True, returncode=0)
+
+        self.assertFalse(install_done(window, (command, {"ok": True})))
+        self.assertLess(events.index(("refresh",)), events.index(("sensitive", True)))
 
     def test_status_refresh_does_not_overwrite_user_tuning_values(self):
         apply_snapshot, _node = load_window_method("_apply_snapshot")
@@ -212,6 +247,27 @@ class AppTests(unittest.TestCase):
         self.assertEqual(window.recovery_spin.value, 78)
         self.assertEqual(window.profile_dropdown.selected, 3)
         self.assertEqual(window.cu_dropdown.selected, 1)
+
+    def test_custom_selection_preserves_full_unsigned_clock_values(self):
+        selected_values, _node = load_window_method("_selected_values")
+        selected_values.__globals__.update({
+            "PRESETS": PRESETS,
+            "validate_frequency_range": validate_frequency_range,
+            "validate_temperature": validate_temperature,
+        })
+        window = types.SimpleNamespace(
+            PRESET_KEYS=(*PRESETS.keys(), "custom"),
+            profile_dropdown=SelectionWidget(3),
+            custom_min_spin=UnsignedSpinWidget(0),
+            custom_max_spin=UnsignedSpinWidget(4_294_967_295),
+            throttle_spin=IntegerSpinWidget(255),
+            recovery_spin=IntegerSpinWidget(255),
+        )
+
+        self.assertEqual(
+            selected_values(window),
+            ("custom", 0, 4_294_967_295, 255, 255),
+        )
 
     def test_cpu_control_is_a_reversible_toggle_and_can_auto_install_helper(self):
         source = Path("bc250/window.py").read_text(encoding="utf-8")
@@ -395,7 +451,7 @@ class AppTests(unittest.TestCase):
         refresh(window)
         set_sensitive(window, True)
 
-        self.assertEqual([widget.sensitive for widget in widgets[:3]], [True, True, True])
+        self.assertEqual([widget.sensitive for widget in widgets[:3]], [False, False, True])
         self.assertFalse(widgets[3].sensitive)
 
     def test_show_message_builds_translated_close_action(self):

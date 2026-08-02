@@ -1,19 +1,35 @@
 import unittest
 
 from bc250.messages import MessageError
-import bc250.presets as presets_module
-from bc250.presets import PRESETS, cu_mask_csv, get_preset, validate_temperature
+from bc250.presets import (
+    PRESETS,
+    cu_mask_csv,
+    get_preset,
+    validate_frequency_range,
+    validate_temperature,
+)
 
 
 class PresetTests(unittest.TestCase):
-    def test_custom_frequency_range_is_bounded_and_ordered(self):
-        self.assertTrue(hasattr(presets_module, "validate_frequency_range"), "validate_frequency_range is missing")
-        self.assertEqual(presets_module.validate_frequency_range(500, 1750), (500, 1750))
-        for values in ((499, 1500), (500, 1801), (1700, 1600), (1750, 1800)):
-            with self.subTest(values=values), self.assertRaises(Exception):
-                presets_module.validate_frequency_range(*values)
+    def test_custom_frequency_range_accepts_full_dbus_domain_and_open_bounds(self):
+        cases = (
+            ((0, 0), (0, 0)),
+            ((0, 4_294_967_295), (0, 4_294_967_295)),
+            ((2_400, 0), (2_400, 0)),
+            ((2_400, 2_400), (2_400, 2_400)),
+            ((4_294_967_295, 4_294_967_295), (4_294_967_295, 4_294_967_295)),
+        )
+        for values, expected in cases:
+            with self.subTest(values=values):
+                self.assertEqual(validate_frequency_range(*values), expected)
 
-    def test_performance_presets_have_expected_safe_limits(self):
+    def test_custom_frequency_range_rejects_values_outside_u32_and_reversed_closed_bounds(self):
+        for values in ((-1, 1_500), (500, 4_294_967_296), (1_800, 1_700)):
+            with self.subTest(values=values), self.assertRaises(MessageError) as caught:
+                validate_frequency_range(*values)
+            self.assertEqual(caught.exception.message.key, "error.invalid_frequency_range")
+
+    def test_performance_presets_keep_expected_default_values(self):
         self.assertEqual((PRESETS["eco"].max_mhz, PRESETS["eco"].max_mv), (1500, 900))
         self.assertEqual((PRESETS["balanced"].max_mhz, PRESETS["balanced"].max_mv), (1700, 920))
         self.assertEqual((PRESETS["performance"].max_mhz, PRESETS["performance"].max_mv), (1800, 930))
@@ -30,22 +46,29 @@ class PresetTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             cu_mask_csv(36)
 
-    def test_temperature_validation_enforces_safe_relationship(self):
-        self.assertEqual(validate_temperature(85, 75), (85, 75))
-        for values in ((79, 70), (91, 80), (85, 81), (85, 69)):
-            with self.subTest(values=values), self.assertRaises(ValueError):
-                validate_temperature(*values)
+    def test_temperature_validation_accepts_each_full_byte_range_independently(self):
+        for values in ((0, 0), (85, 75), (255, 255), (0, 255), (255, 0)):
+            with self.subTest(values=values):
+                self.assertEqual(validate_temperature(*values), values)
 
-    def test_invalid_temperature_has_stable_message_id(self):
-        with self.assertRaises(MessageError) as caught:
-            validate_temperature(95, 75)
-        self.assertEqual(caught.exception.message.key, "error.invalid_throttle")
+    def test_temperature_validation_rejects_each_value_outside_byte_range(self):
+        cases = (
+            ((-1, 75), "error.invalid_throttle"),
+            ((256, 75), "error.invalid_throttle"),
+            ((85, -1), "error.invalid_recovery_gap"),
+            ((85, 256), "error.invalid_recovery_gap"),
+        )
+        for values, expected_key in cases:
+            with self.subTest(values=values), self.assertRaises(MessageError) as caught:
+                validate_temperature(*values)
+            self.assertEqual(caught.exception.message.key, expected_key)
 
     def test_all_validation_failures_have_stable_message_ids(self):
         invalid_calls = (
             (lambda: get_preset("turbo"), "error.invalid_preset"),
             (lambda: cu_mask_csv(36), "error.invalid_cu"),
-            (lambda: validate_temperature(85, 81), "error.invalid_recovery_gap"),
+            (lambda: validate_frequency_range(1_800, 1_700), "error.invalid_frequency_range"),
+            (lambda: validate_temperature(85, 256), "error.invalid_recovery_gap"),
         )
         for invalid_call, expected_key in invalid_calls:
             with self.subTest(expected_key=expected_key), self.assertRaises(MessageError) as caught:

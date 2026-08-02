@@ -14,7 +14,13 @@ from .control import CommandResult, GovernorController, PrivilegedRunner
 from .i18n import Translator
 from .messages import MessageError, UserMessage
 from .power import PowerController, PowerState
-from .presets import PRESETS, validate_frequency_range, validate_temperature
+from .presets import (
+    MAX_TEMPERATURE_C,
+    PRESETS,
+    UINT32_MAX,
+    validate_frequency_range,
+    validate_temperature,
+)
 from .status import UNKNOWN, FanReading, StatusCollector, StatusSnapshot, SystemInfo
 
 
@@ -85,6 +91,7 @@ class MainWindow(Gtk.ApplicationWindow):
         self._changing_power_controls = False
         self._controls_sensitive = True
         self._install_eligible = False
+        self._governor_ready = False
         self._helper_ready = False
         self._cpu_mode_eligible = False
         self._cpu_mode_pending = False
@@ -249,13 +256,13 @@ class MainWindow(Gtk.ApplicationWindow):
         self.throttle_label.add_css_class("field-label")
         self.recovery_label = Gtk.Label(xalign=0)
         self.recovery_label.add_css_class("field-label")
-        self.custom_min_spin = Gtk.SpinButton.new_with_range(500, 1700, 25)
+        self.custom_min_spin = Gtk.SpinButton.new_with_range(0, UINT32_MAX, 25)
         self.custom_min_spin.set_value(500)
-        self.custom_max_spin = Gtk.SpinButton.new_with_range(600, 1800, 25)
+        self.custom_max_spin = Gtk.SpinButton.new_with_range(0, UINT32_MAX, 25)
         self.custom_max_spin.set_value(1800)
-        self.throttle_spin = Gtk.SpinButton.new_with_range(80, 90, 1)
+        self.throttle_spin = Gtk.SpinButton.new_with_range(0, MAX_TEMPERATURE_C, 1)
         self.throttle_spin.set_value(85)
-        self.recovery_spin = Gtk.SpinButton.new_with_range(65, 85, 1)
+        self.recovery_spin = Gtk.SpinButton.new_with_range(0, MAX_TEMPERATURE_C, 1)
         self.recovery_spin.set_value(75)
         for column, (label, spin) in enumerate((
             (self.custom_min_label, self.custom_min_spin),
@@ -642,15 +649,18 @@ class MainWindow(Gtk.ApplicationWindow):
         self.setup_banner.set_visible(True)
         self._cpu_mode_eligible = False
         if not report.bundle.ok:
+            self._governor_ready = False
             self._helper_ready = False
             detail = report.bundle.errors[0] if report.bundle.errors else UserMessage("error.bundle_invalid", {"detail": ""})
             self.setup_detail.set_text(self._render_message(detail))
             self._install_eligible = False
         elif not report.platform.supported:
+            self._governor_ready = False
             self._helper_ready = False
             self.setup_detail.set_text(self._render_message(report.platform.message))
             self._install_eligible = False
         else:
+            self._governor_ready = bool(report.governor_installed)
             self._helper_ready = bool(report.helper_installed)
             self._cpu_mode_eligible = True
             missing = []
@@ -664,6 +674,8 @@ class MainWindow(Gtk.ApplicationWindow):
                 missing.append(self.translator.gettext("component.helper"))
             if not getattr(report, "cpu_mode_installed", False):
                 missing.append(self.translator.gettext("component.cpu_mode"))
+            if not getattr(report, "support_installed", False):
+                missing.append(self.translator.gettext("component.support"))
             self.setup_detail.set_text(
                 self.translator.gettext("setup.required", components=", ".join(missing))
                 if missing
@@ -870,8 +882,8 @@ class MainWindow(Gtk.ApplicationWindow):
         validate_temperature(throttle, recovery)
         if mode == "custom":
             min_mhz, max_mhz = validate_frequency_range(
-                self.custom_min_spin.get_value_as_int(),
-                self.custom_max_spin.get_value_as_int(),
+                int(self.custom_min_spin.get_value()),
+                int(self.custom_max_spin.get_value()),
             )
         else:
             preset = PRESETS[mode]
@@ -880,10 +892,14 @@ class MainWindow(Gtk.ApplicationWindow):
 
     def _set_controls_sensitive(self, value: bool) -> None:
         self._controls_sensitive = value
-        for name in ("apply_button", "save_button", "cu_save_button"):
+        tuning_sensitive = value and self._governor_ready
+        for name in ("apply_button", "save_button"):
             widget = getattr(self, name, None)
             if widget is not None:
-                widget.set_sensitive(value)
+                widget.set_sensitive(tuning_sensitive)
+        cu_save_button = getattr(self, "cu_save_button", None)
+        if cu_save_button is not None:
+            cu_save_button.set_sensitive(value)
         cpu_toggle = getattr(self, "cpu_mode_toggle", None)
         if cpu_toggle is not None:
             cpu_toggle.set_sensitive(value and self._cpu_mode_eligible)
@@ -1134,7 +1150,6 @@ class MainWindow(Gtk.ApplicationWindow):
         self._run_async(self.privileged.install, self._install_done)
 
     def _install_done(self, response) -> bool:
-        self._set_controls_sensitive(True)
         command, payload = response
         if command.ok and payload.get("ok"):
             self._show_message(
@@ -1155,6 +1170,7 @@ class MainWindow(Gtk.ApplicationWindow):
                 self._payload_text(payload, "dialog.install_failed"),
                 Gtk.MessageType.ERROR,
             )
+        self._set_controls_sensitive(True)
         return False
 
     def _confirm(self, title: str, message: str, callback) -> None:
