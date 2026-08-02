@@ -1,295 +1,298 @@
+**English** | [한국어](README.ko.md)
+
 # BC-250 Custom Pannel
 
-AMD BC-250에서 Bazzite를 사용할 때 GPU 상태, 펌웨어 정보와 검증된 성능 설정을 한 화면에서 확인하고 조절하는 GTK4 제어판입니다. 프로젝트 이름의 `Pannel` 철자는 기존 요청 경로와 호환하기 위해 유지합니다.
+BC-250 Custom Pannel is a GTK4 control panel for AMD BC-250 systems running Bazzite. It provides a single interface for monitoring GPU status and firmware information and for applying validated performance settings. The `Pannel` spelling is intentionally retained for compatibility with the existing project path.
 
-이 프로젝트는 Python 화면만 제공하지 않습니다. 실행에 필요한 GPU 거버너, CU 부팅 관리자, Bazzite 43용 UMR 실행본, 서비스와 정책 템플릿을 버전과 SHA-256으로 고정해 함께 제공합니다.
+This project is more than a Python GUI. It includes the GPU governor, CU boot manager, a Bazzite 43-compatible UMR binary, service files, and policy templates required at runtime. Their versions and SHA-256 hashes are pinned in the repository.
 
-![BC-250 Control Panel 대시보드](screenshot.png)
+![BC-250 Control Panel dashboard](screenshot.png)
 
-위 이미지는 Bazzite GNOME에서 실행한 실제 화면입니다. 표시되는 온도·전력·클럭·팬·CPU/CU 값은 장치와 현재 부하에 따라 달라집니다.
+The image above shows the application running on Bazzite GNOME. Temperature, power, clock, fan, CPU, and CU readings vary depending on the device and current workload.
 
-## 주요 기능
+## Features
 
-- 상단 요약에서 현재 CPU 코어/스레드와 GPU CU를 동시에 표시
-- CPU·GPU 온도, GPU 전력·클럭·전압과 팬 RPM을 1초 간격으로 갱신
-- 절전·균형·성능 프리셋과 500–1800 MHz 사용자 GPU 클럭 설정
-- 스로틀 온도와 복구 온도 설정 및 검증된 전압 곡선 사용
-- 24·32·40 CU 다음 부팅 프로필 저장
-- 현재 상태에 따라 6C/12T와 8C/16T를 전환하는 CPU 토글
-- 자동 절전과 화면 꺼짐의 차단·시간 프리셋·1–240분 사용자 설정
-- BIOS·커널 정보, 한국어·영어·일본어·중국어 UI
-- 필요한 구성요소를 검사하고 빠진 항목만 한 번에 설치
+- Shows the current CPU core/thread count and GPU CU count together in the top summary
+- Refreshes CPU/GPU temperature, GPU power, clock, voltage, and fan RPM every second
+- Provides Power Saving, Balanced, and Performance presets plus a custom 500–1800 MHz GPU clock range
+- Configures throttle and recovery temperatures using a validated voltage curve
+- Saves 24, 32, or 40 CU profiles for the next boot
+- Toggles between 6C/12T and 8C/16T according to the current CPU state
+- Controls automatic suspend and display-off timers with Disabled, preset, and custom 1–240 minute options
+- Displays BIOS and kernel information and supports Korean, English, Japanese, and Simplified Chinese
+- Checks required components and installs only the missing items in one operation
 
-## 지원 대상
+## Supported systems
 
 - AMD BC-250 (`1002:13fe`)
 - Bazzite x86_64
-- Bazzite GNOME 또는 Deck GNOME 이미지
-- Wayland 세션
+- Bazzite GNOME or Deck GNOME image
+- Wayland session
 
-다른 GPU, 일반 Fedora, Ubuntu, Arch/CachyOS는 설치 대상이 아닙니다. 프로그램은 지원 환경을 먼저 검사하고 일치하지 않으면 시스템 설치를 중단합니다.
+Other GPUs and general Fedora, Ubuntu, or Arch/CachyOS installations are not supported targets. The installer checks the platform first and stops without changing system files when the environment does not match.
 
-## 빠른 시작
+## Quick start
 
-Git에서 받은 프로젝트 폴더에서 다음 실행 파일을 엽니다.
+From the cloned project directory, run:
 
 ```bash
 ./run.sh
 ```
 
-GUI는 먼저 열립니다. 상단 구성요소 줄은 항상 표시되며, 거버너·CU 관리자·UMR·권한 도우미·CPU 모드 서비스 중 빠진 파일이 있을 때만 `구성요소 설치` 버튼이 활성화됩니다. 버튼을 한 번 누르고 시스템 인증을 완료하면 모든 번들 파일의 SHA-256을 확인한 뒤 빠진 파일과 서비스를 자동으로 설정합니다. 모두 설치되어 있으면 버튼은 비활성화됩니다. 각 도구를 별도로 내려받거나 설치 명령을 입력할 필요가 없습니다.
+The GUI opens first. The component status row is always visible, while the `Install components` button is enabled only when the governor, CU manager, UMR, privileged helper, or CPU mode service is missing. After you press the button once and complete system authentication, the installer verifies the SHA-256 hash of every bundled file and installs the missing files and services. The button is disabled when everything is present. No separate downloads or installation commands are required.
 
-GNOME 앱 목록에 등록하려면 다음 파일을 한 번 실행합니다.
+To register the application in the GNOME app grid, run once:
 
 ```bash
 ./install-app.sh
 ```
 
-이 스크립트는 현재 Git 클론 위치를 자동으로 사용하므로 사용자 이름이나 설치 경로를 고정하지 않습니다.
+This script resolves the current clone location automatically. It does not hard-code a user name or installation path.
 
-## 화면 구성
+## Interface
 
-### 컴팩트 실시간 대시보드
+### Compact real-time dashboard
 
-기본 창 크기는 600x700입니다. 세로 스크롤 컨테이너를 사용하지 않으며 실시간 상태, 거버너, CPU/GPU 코어 제어, 전원/IDLE, BIOS와 커널 정보가 한 화면에 모두 표시됩니다. 여섯 센서는 서로 떨어진 카드가 아니라 하나의 2행 상태 밴드에 다음 순서로 표시됩니다.
+The default window size is 600x700. It does not use a vertical scrolling container: real-time status, governor controls, CPU/GPU core controls, power/IDLE settings, and BIOS/kernel information are all visible in one window. The six sensors are arranged in one two-row status band in the following order:
 
-제목표시줄 왼쪽에는 전체 상태, 가운데에는 프로그램 이름, 오른쪽에는 갱신 시각과 언어 선택기를 배치했습니다. 그 아래 요약 줄은 `CPU 8C/16T · GPU 40/40 CU`처럼 현재 하드웨어 상태를 한 줄로 표시합니다. 주요 영역은 기능별로 서로 다른 강조색을 사용하고 버튼·콤보박스 텍스트는 어두운 배경에서 읽을 수 있도록 흰색으로 통일했습니다.
+The title bar shows overall status on the left, the application name in the center, and the refresh time and language selector on the right. The summary line below displays the current hardware state in a single line, such as `CPU 8C/16T · GPU 40/40 CU`. Major areas use distinct accent colors, while button and combo-box text is consistently white for readability on the dark background.
 
-1. CPU 온도
-2. GPU 온도
-3. GPU 전력
-4. GPU 클럭
-5. SMU 전압
-6. 동작 중인 팬 RPM
+1. CPU temperature
+2. GPU temperature
+3. GPU power
+4. GPU clock
+5. SMU voltage
+6. Active fan RPM
 
-현재 부팅에서 확인된 실시간 CU 수와 저장된 다음 부팅 CU 프로필은 GPU 코어 영역에서 구분해 표시합니다. CPU 코어 영역은 현재 `6C / 12T` 또는 `8C / 16T` 상태와 언락 가능 여부를 함께 보여 줍니다.
+The GPU core area distinguishes the live CU count detected for the current boot from the saved next-boot CU profile. The CPU core area shows the current `6C / 12T` or `8C / 16T` state together with unlock availability.
 
-센서는 1초마다 백그라운드에서 갱신되며 느린 시스템 호출 때문에 창이 멈추지 않도록 구성했습니다. 거버너·스로틀·복구 온도와 CU 입력칸은 시작할 때 한 번만 현재 설정으로 채우며 이후 센서 갱신이 사용자가 입력한 값을 덮어쓰지 않습니다. BC-250의 GPU 클럭과 드라이버가 보고하는 소프트웨어 전력 센서는 부하 중 실제 소비전력계와 차이가 날 수 있습니다. 드라이버가 센서를 제공하지 않으면 임의의 값을 만들지 않고 `확인 불가`로 표시합니다.
+Sensors refresh in the background every second so slow system calls do not freeze the window. Governor, throttle, recovery-temperature, and CU fields are populated only once at startup; later sensor refreshes do not overwrite user input. BC-250 GPU clock and software power sensors reported by the driver can differ from wall-power measurements under load. If the driver does not expose a sensor, the application displays `Unavailable` instead of inventing a value.
 
-### 언어
+### Language
 
-언어를 `자동`으로 두면 `LC_ALL`, `LC_MESSAGES`, `LANG` 순서로 시스템 언어를 판단합니다. 헤더에서 한국어, English, 日本語, 简体中文을 직접 선택할 수 있고, 지원하지 않는 로캘 및 번역 키가 없는 경우에는 English를 사용합니다. 선택값은 `~/.config/bc250-custom-pannel/settings.json`에 저장되며, 헤더에서 언어를 바꾸면 재시작 없이 즉시 화면에 반영됩니다.
+When the language is set to `Auto`, the application checks `LC_ALL`, `LC_MESSAGES`, and `LANG` in that order. Korean, English, 日本語, and 简体中文 can be selected directly from the header. Unsupported locales and missing translation keys fall back to English. The selection is stored in `~/.config/bc250-custom-pannel/settings.json` and is applied immediately without restarting the application.
 
-### CPU 및 팬 센서 안전
+### CPU and fan sensor safety
 
-CPU 온도는 먼저 `k10temp`의 `Tctl`을 읽고, 없으면 보드 센서의 `CPU`를 사용합니다. 팬 RPM은 `nct6686` 또는 `nct6687` 센서에서 읽습니다. `hwmon` 번호를 고정하지 않고 이름과 레이블로 매번 찾습니다. 이 릴리스에서 애플리케이션은 PWM 값을 절대 쓰지 않으며 팬 제어는 엄격히 읽기 전용입니다. `Pump Fan`에 연결된 물리 장치가 무엇인지 확인되기 전까지 팬 제어는 범위 밖입니다.
+CPU temperature is read from the `Tctl` value of `k10temp` first, with the board sensor labeled `CPU` used as a fallback. Fan RPM is read from an `nct6686` or `nct6687` sensor. The application discovers hwmon devices by name and label on every refresh instead of hard-coding hwmon numbers. This release never writes PWM values; fan control is strictly read-only. Fan control remains out of scope until the physical device connected to `Pump Fan` has been verified.
 
-### 전원 / IDLE
+### Power / IDLE
 
-`자동 절전`과 `화면 꺼짐` 콤보박스는 GNOME의 세션 타이머만 제어합니다. `차단`, 5·10·15·30·60분 프리셋과 `사용자 설정`을 제공하며 선택 즉시 현재 사용자 세션에 적용합니다. 사용자 설정을 선택하면 1–240분 입력칸이 나타납니다. 두 항목을 차단해도 CPU가 일을 기다릴 때 사용하는 MWAIT 유휴 대기와 AMDGPU의 DPM 자동 클럭·전력 관리는 꺼지지 않습니다. 화면에는 현재 감지된 CPU IDLE 방식과 GPU DPM 모드를 함께 표시합니다.
+The `Automatic suspend` and `Display off` combo boxes control only the GNOME session timers. They provide Disabled, 5, 10, 15, 30, and 60 minute presets plus a custom setting. Selecting a value applies it immediately to the current user session. Choosing the custom setting reveals a 1–240 minute input field. Disabling both timers does not disable the CPU's MWAIT idle state or AMDGPU DPM automatic clock and power management. The application also displays the detected CPU IDLE method and GPU DPM mode.
 
-현재 BC-250에서는 cpuidle 드라이버 파일이 `none`으로 보이더라도 커널 로그와 CPU 기능에서 MWAIT 사용이 확인될 수 있습니다. 이 경우 GUI는 `CPU MWAIT`로 표시합니다. GPU가 `auto`로 표시되면 부하에 따라 클럭과 전력을 낮추는 자동 관리가 동작 중입니다.
+On BC-250, the cpuidle driver file may report `none` while kernel logs and CPU capabilities still confirm MWAIT usage. In that case, the GUI displays `CPU MWAIT`. A GPU DPM value of `auto` means that automatic clock and power scaling is active according to load.
 
-자동 절전 시간은 AC·배터리 세션에 함께 저장되고, 화면 꺼짐 시간은 GNOME 유휴 타이머로 저장됩니다. `차단`은 해당 타이머를 0으로 설정합니다. 이 설정은 사용자 세션 설정이며 관리자 인증이나 재부팅이 필요하지 않습니다.
+Automatic suspend is saved for both AC and battery sessions, while display-off time is stored as the GNOME idle timer. Disabled sets the corresponding timer to zero. These are user-session settings and do not require administrator authentication or a reboot.
 
-### BIOS 및 커널
+### BIOS and kernel
 
-- BIOS 제조사
-- BIOS 버전
-- BIOS 날짜
-- Linux 커널 버전
-- 시스템 아키텍처
+- BIOS vendor
+- BIOS version
+- BIOS date
+- Linux kernel version
+- System architecture
 
-정보는 `/sys/class/dmi/id`와 실행 중인 커널에서 읽습니다. 관리자 권한은 필요하지 않습니다.
+The information is read from `/sys/class/dmi/id` and the running kernel. Administrator privileges are not required.
 
-### 성능과 온도
+### Performance and temperature
 
-| 프리셋 | 클럭 범위 | 안전 곡선 상한 | 용도 |
+| Preset | Clock range | Validated curve limit | Intended use |
 |---|---:|---:|---|
-| 절전 | 500–1500 MHz | 900 mV | 낮은 발열과 소비전력 |
-| 균형 | 500–1700 MHz | 920 mV | 성능과 효율의 균형 |
-| 성능 | 500–1800 MHz | 930 mV | 현재 장비에서 검증한 최대 설정 |
+| Power Saving | 500–1500 MHz | 900 mV | Lower heat and power consumption |
+| Balanced | 500–1700 MHz | 920 mV | Balance between performance and efficiency |
+| Performance | 500–1800 MHz | 930 mV | Highest setting validated on the current system |
 
-`지금 적용`은 거버너 D-Bus에만 전달되며 재부팅하면 저장된 설정으로 돌아갑니다. `적용 후 부팅에도 저장`은 시스템 인증 후 기존 설정을 백업하고 설정 파일을 원자적으로 바꾼 뒤 거버너 서비스를 다시 시작합니다.
+`Apply now` sends the setting only to the governor D-Bus service; the saved configuration is restored after a reboot. `Apply and save` requests system authentication, backs up the existing configuration, atomically replaces the configuration file, and restarts the governor service.
 
-프리셋 아래의 `사용자 설정`을 고르면 최소·최대 GPU 클럭을 500–1800 MHz 범위에서 직접 지정할 수 있습니다. 최소와 최대는 100 MHz 이상 떨어져야 하며, 같은 화면에서 스로틀·복구 온도도 지정합니다. 거버너의 실시간 API는 클럭 범위와 온도를 제어하고 전압은 설치된 안전 포인트 곡선을 따르므로, 실제로 적용되지 않는 별도 전압 입력칸은 제공하지 않습니다.
+Selecting `Custom` below the presets allows direct minimum and maximum GPU clock configuration within 500–1800 MHz. The values must be at least 100 MHz apart. Throttle and recovery temperatures are configured on the same screen. The governor's runtime API controls frequency and temperature, while voltage follows the installed validated safe-point curve. The application therefore does not expose a separate voltage field that the governor cannot actually apply.
 
-스로틀 시작 온도는 80–90°C만 허용하고, 복구 온도는 시작 온도보다 5–15°C 낮아야 합니다. GUI의 `복구 간격` 값은 시간이 아니라 성능 제한을 해제하는 실제 복구 온도입니다. 예를 들어 85°C/75°C는 85°C에서 제한을 시작하고 75°C까지 식으면 해제한다는 뜻입니다. 범위를 벗어난 값은 시스템 명령을 실행하기 전에 거부합니다.
+Throttle temperature is limited to 80–90°C, and recovery temperature must be 5–15°C below the throttle temperature. The GUI label `Recovery gap` represents the actual recovery temperature, not a time interval. For example, 85°C/75°C begins limiting performance at 85°C and releases the limit after cooling to 75°C. Invalid values are rejected before any system command is executed.
 
-## 안전 범위
+## Safety limits
 
-- GUI의 사용자 클럭 범위는 500–1800 MHz로 제한되며 최소 100 MHz 간격을 검사합니다.
-- 임의 전압 입력은 제공하지 않고 검증된 안전 포인트 곡선을 사용합니다.
-- 700mV 미만 전압은 제공하지 않습니다.
-- 정확한 와트 제한 장치가 아니므로 전력은 센서로 표시하고 클럭·전압 프리셋으로 간접 제한합니다.
-- 성능 설정은 기존 `cyan-skillfish-governor-smu` 한 개만 사용합니다. 다른 GPU 거버너와 동시에 실행하지 마십시오.
-- CU 변경은 실행 중 GPU 레지스터를 쓰지 않습니다.
+- Custom GPU clock settings are limited to 500–1800 MHz and require at least a 100 MHz gap.
+- Arbitrary voltage input is not provided; the application uses the validated safe-point curve.
+- Voltages below 700 mV are not provided.
+- This is not an exact wattage limiter. Power is displayed from sensors and is controlled indirectly through clock and voltage presets.
+- Performance control uses only the existing `cyan-skillfish-governor-smu` service. Do not run another GPU governor at the same time.
+- CU changes do not write live GPU registers while the GPU is in use.
 
-### CU 부팅 프로필
+### CU boot profiles
 
-| 프로필 | 네 행의 WGP 마스크 |
+| Profile | WGP masks for the four rows |
 |---:|---|
 | 24 CU | `0x07,0x07,0x07,0x07` |
 | 32 CU | `0x0f,0x0f,0x0f,0x0f` |
 | 40 CU | `0x1f,0x1f,0x1f,0x1f` |
 
-`부팅 프로필 저장`은 `/etc/bc250-cu-live-manager.conf`만 백업·갱신합니다. 현재 GPU에는 즉시 적용하지 않으며 다음 재부팅 때 서비스가 적용합니다. 40 CU가 모든 보드에서 같은 안정성을 보장하는 것은 아니므로 온도와 게임 안정성을 확인하십시오.
+`Save boot profile` backs up and updates only `/etc/bc250-cu-live-manager.conf`. It does not change the live GPU; the service applies the selected profile on the next boot. A 40 CU profile is not guaranteed to be equally stable on every board. Check temperatures and game stability after enabling it.
 
-### CPU 8코어 / 16스레드 토글
+### CPU 8-core / 16-thread toggle
 
-CPU 버튼은 현재 온라인 스레드 수를 기준으로 동작하는 토글입니다. 기본 `6C / 12T` 상태에서 켜면 위험 경고와 시스템 인증 후 동봉된 `bc250-cu-live-manager --yes cpu-unlock`을 실행하고, 자동 재부팅 없이 `언락 예약됨 · 재부팅 필요`를 표시합니다. 사용자가 직접 재부팅한 뒤 추가 코어가 온라인 상태가 됩니다.
+The CPU button operates as a toggle based on the number of currently online threads. Enabling it from the default `6C / 12T` state shows a risk warning, requests system authentication, and runs the bundled `bc250-cu-live-manager --yes cpu-unlock`. It does not reboot automatically; the GUI displays `Unlock scheduled · reboot required`. The additional cores come online after the user reboots the system.
 
-권한 도우미가 아직 없을 때 CPU 토글을 먼저 눌러도 구성요소 설치와 CPU 모드 적용을 하나의 관리자 작업으로 처리하므로 인증 창을 연달아 두 번 띄우지 않습니다.
+If the privileged helper has not yet been installed, pressing the CPU toggle first combines component installation and CPU mode application into one administrator operation so authentication is not requested twice in succession.
 
-`8C / 16T` 상태에서 끄면 검증되지 않은 역방향 SMU 쓰기를 하지 않고 Linux CPU hotplug 인터페이스로 추가 두 물리 코어의 스레드를 오프라인 처리합니다. 요청 상태는 `/etc/bc250-custom-pannel-cpu.conf`에 저장되고 `bc250-cpu-mode.service`가 부팅 때 다시 적용합니다. 중간 쓰기에 실패하면 이미 바꾼 스레드를 원래 상태로 되돌립니다.
+Disabling the toggle from an `8C / 16T` state does not perform an unvalidated reverse SMU write. Instead, it uses the Linux CPU hotplug interface to offline the threads belonging to the two additional physical cores. The requested state is saved in `/etc/bc250-custom-pannel-cpu.conf`, and `bc250-cpu-mode.service` reapplies it during boot. If a write fails partway through, already modified threads are restored to their original state.
 
-최초 구성요소 설치만으로 CPU 상태가 바뀌지는 않습니다. 초기 모드는 `auto`라서 사용자가 토글을 직접 선택하기 전까지 현재 상태를 유지합니다. 비활성화된 두 코어는 개별 보드에서 불안정하거나 불량일 수 있으므로 언락 후 부하 테스트가 필요합니다. SMU 언락은 휘발성이라 완전한 전원 차단 후 다시 언락·재부팅이 필요할 수 있습니다. 화면은 실제 온라인 sysfs 토폴로지만 읽으며 8C/16T를 추정해서 표시하지 않습니다.
+Installing the components alone does not change the CPU state. The initial mode is `auto`, which preserves the current state until the user explicitly changes the toggle. The two disabled cores may be unstable or defective on an individual board, so load testing is required after unlocking them. SMU unlocking is volatile; a complete power loss may require another unlock and reboot. The GUI reads the actual online sysfs topology and never guesses that the system is running at 8C/16T.
 
-## 동봉 구성요소
+## Bundled components
 
-정확한 설치 파일, 원본 URL, 설치 경로, 모드와 SHA-256은 [`VENDOR-MANIFEST.json`](VENDOR-MANIFEST.json)에 기록됩니다.
+Exact files, source URLs, installation paths, modes, and SHA-256 hashes are recorded in [`VENDOR-MANIFEST.json`](VENDOR-MANIFEST.json).
 
-| 구성요소 | 고정 버전 | 용도 |
+| Component | Pinned version | Purpose |
 |---|---|---|
-| cyan-skillfish-governor-smu | v0.4.11 | SMU 기반 GPU 클럭·온도 관리 |
-| bc250-cu-live-manager | 프로젝트 검증본 | 다음 부팅 WGP/CU 프로필 적용 |
-| UMR | 1.0.10-6.fc43 | BC-250 GPU 레지스터 접근 |
-| 권한 도우미 | 0.2.0 | 검증된 설정만 관리자 권한으로 적용 |
-| CPU 모드 서비스 | 1 | 선택한 CPU 온라인/오프라인 상태를 부팅 때 적용 |
+| cyan-skillfish-governor-smu | v0.4.11 | SMU-based GPU clock and temperature management |
+| bc250-cu-live-manager | Project-validated copy | Applies next-boot WGP/CU profiles |
+| UMR | 1.0.10-6.fc43 | Accesses BC-250 GPU registers |
+| Privileged helper | 0.2.0 | Applies validated settings with administrator privileges |
+| CPU mode service | 1 | Applies the selected online/offline CPU state during boot |
 
-거버너와 UMR은 MIT 라이선스입니다. 원문 라이선스와 저작권 고지는 `vendor/licenses/` 및 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)에 포함하며 설치 시 Bazzite의 쓰기 가능한 `/opt/bc250-custom-pannel/licenses/`에 복사합니다. Polkit 규칙은 읽기 전용 `/usr/share` 대신 `/etc/polkit-1/rules.d/`에 설치합니다. 설치기는 매니페스트 해시가 하나라도 다르면 어떤 시스템 파일도 쓰지 않습니다. 다만 현재 매니페스트에는 디지털 서명이 없으므로 이 검사는 파일 손상과 개별 변경을 감지할 뿐, 저장소와 매니페스트가 함께 변조된 경우까지 출처를 증명하지는 않습니다.
+The governor and UMR are distributed under the MIT License. Their original license text and copyright notices are included under `vendor/licenses/` and in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), and are copied to the writable Bazzite path `/opt/bc250-custom-pannel/licenses/` during installation. The Polkit rule is installed under `/etc/polkit-1/rules.d/` instead of the read-only `/usr/share` tree. The installer writes no system files if any manifest hash differs. The manifest is not digitally signed, however, so the hash check detects file corruption and individual modifications but cannot prove provenance if both the repository and manifest are compromised together.
 
-번들 UMR은 Bazzite 43 x86_64에서 검증했습니다. `ldd` 검사에서 공유 라이브러리가 누락되면 해당 실행본을 강제로 사용하지 않습니다. 향후 Bazzite 기반 버전에서는 배포판 UMR 패키지 설치가 필요할 수 있고 rpm-ostree 적용 후 한 번 재부팅해야 할 수 있습니다.
+The bundled UMR binary was validated on Bazzite 43 x86_64. It is not forced into use when `ldd` reports a missing shared library. A later Bazzite base version may require the distribution UMR package and one reboot after rpm-ostree applies the change.
 
-## 설치 범위와 관리자 권한
+## Installation scope and administrator privileges
 
-센서 조회, BIOS·커널 정보 표시, 언어 변경과 GNOME 자동 절전·화면 꺼짐 설정은 일반 사용자 권한으로 동작합니다. `./run.sh`를 실행하는 것만으로 관리자 권한을 얻거나 시스템 파일을 변경하지 않습니다. 다음 작업에만 시스템 인증을 요청합니다.
+Sensor reads, BIOS/kernel information, language changes, and GNOME automatic-suspend/display-off settings run with normal user privileges. Running `./run.sh` alone does not gain administrator privileges or modify system files. System authentication is requested only for the following operations:
 
-- 동봉 구성요소 설치와 제거
-- 거버너 설정의 영구 저장 및 서비스 재시작
-- 다음 부팅 CU 프로필 저장
-- CPU 언락 요청과 CPU 온라인·오프라인 모드 저장
+- Installing or removing bundled components
+- Persistently saving governor settings and restarting the service
+- Saving the next-boot CU profile
+- Requesting CPU unlock and saving the CPU online/offline mode
 
-시스템 인증을 완료하면 설치기와 권한 도우미는 다음과 같이 고정된 위치만 사용합니다.
+After system authentication, the installer and privileged helper use only the following fixed locations:
 
-| 위치 | 내용 |
+| Path | Contents |
 |---|---|
-| `/etc/cyan-skillfish-governor-smu/` | 거버너 설정과 안전 전압 곡선 |
-| `/etc/bc250-cu-live-manager.conf` | 다음 부팅 CU 프로필 |
-| `/etc/bc250-custom-pannel-cpu.conf` | 부팅 시 적용할 CPU 모드 |
-| `/usr/local/bin/bc250-cu-live-manager` | CU·CPU 관리 도구 |
-| `/opt/bc250-custom-pannel/` | 고정 UMR 실행본과 제3자 라이선스 |
-| `/usr/local/libexec/bc250-custom-pannel-privileged` | 제한된 관리자 작업 도우미 |
-| `/etc/systemd/system/` | 거버너·CU·CPU 서비스 |
-| `/etc/dbus-1/system.d/` | 거버너 D-Bus 정책 |
-| `/etc/polkit-1/rules.d/` | 관리자 인증 정책 |
+| `/etc/cyan-skillfish-governor-smu/` | Governor configuration and safe voltage curve |
+| `/etc/bc250-cu-live-manager.conf` | Next-boot CU profile |
+| `/etc/bc250-custom-pannel-cpu.conf` | CPU mode applied during boot |
+| `/usr/local/bin/bc250-cu-live-manager` | CU/CPU management utility |
+| `/opt/bc250-custom-pannel/` | Pinned UMR binary and third-party licenses |
+| `/usr/local/libexec/bc250-custom-pannel-privileged` | Restricted privileged helper |
+| `/etc/systemd/system/` | Governor, CU, and CPU services |
+| `/etc/dbus-1/system.d/` | Governor D-Bus policy |
+| `/etc/polkit-1/rules.d/` | Administrator authentication policy |
 
-서비스는 GPU 레지스터와 시스템 설정에 접근하기 위해 root로 실행되지만 외부 포트를 열거나 네트워크 서버를 시작하지 않습니다. 프로젝트 코드에는 API 키나 계정 비밀번호를 저장하는 기능이 없습니다. GNOME 앱 등록은 현재 사용자의 `~/.local/share/applications/`만 변경합니다.
+The services run as root because they need access to GPU registers and system configuration, but they do not open external ports or start a network server. The project has no feature for storing API keys or account passwords. GNOME app registration modifies only the current user's `~/.local/share/applications/` directory.
 
-## 보안 검토 상태
+## Security review status
 
-> **공개 배포 판정: 보류.** 아래 내용은 2026-08-02 현재 코드에 대한 점검 결과이며 보안 인증이나 무결점 보증이 아닙니다. 개인 단독 사용에서는 노출 가능성이 비교적 낮지만, 다른 사용자에게 배포하기 전에는 다음 세 항목을 수정해야 합니다.
+> **Public distribution status: on hold.** The following findings reflect a review of the code as of 2026-08-02. They are not a security certification or a guarantee that the project is defect-free. Exposure is relatively limited on a single-user system, but the following three issues should be addressed before distributing the application to other users.
 
-1. **Polkit 인증 유지 범위 — 높음**
-   `vendor/templates/49-bc250-custom-pannel.rules`가 범용 `org.freedesktop.policykit.exec` 동작에 `AUTH_ADMIN_KEEP`을 사용합니다. 이 방식은 관리자 암호를 입력한 뒤 짧은 인증 유지 시간 동안 프로그램 세부 정보가 다른 `pkexec` 실행에도 승인이 재사용될 수 있습니다. 배포 전 `AUTH_ADMIN`으로 바꾸거나 실행 파일이 고정된 전용 Polkit 동작을 정의해야 합니다. [Polkit 공식 문서](https://polkit.pages.freedesktop.org/polkit/polkit.8.html)도 변수에 의존하는 규칙에는 `*_KEEP`을 사용하지 말라고 안내합니다.
+1. **Polkit authorization retention scope — High**
+   `vendor/templates/49-bc250-custom-pannel.rules` uses `AUTH_ADMIN_KEEP` with the generic `org.freedesktop.policykit.exec` action. After the administrator password is entered, approval may be reused by a different `pkexec` program during the short authorization-retention window. Before distribution, replace it with `AUTH_ADMIN` or define a dedicated Polkit action with a fixed executable. The [official Polkit documentation](https://polkit.pages.freedesktop.org/polkit/polkit.8.html) also warns against using `*_KEEP` for rules that depend on variables.
 
-2. **거버너 D-Bus 쓰기 권한 — 중간**
-   `vendor/templates/com.cyanskillfish.Governor.conf`는 기본 로컬 사용자에게 거버너 쓰기 인터페이스 호출을 허용합니다. 따라서 같은 장치에서 실행되는 다른 프로세스가 GUI의 500–1800 MHz 및 온도 검사를 거치지 않고 상위 거버너 API를 직접 호출할 수 있습니다. 단일 사용자 장치에서는 위험이 낮아지지만 GUI 제한은 시스템 전체의 보안 경계가 아닙니다. 공개 배포 전 전용 사용자 그룹이나 별도 인증 도우미로 쓰기 권한을 제한해야 합니다.
+2. **Governor D-Bus write permission — Medium**
+   `vendor/templates/com.cyanskillfish.Governor.conf` allows default local users to call the governor's write interface. Another process running on the same device can therefore call the upstream governor API without passing through the GUI's 500–1800 MHz and temperature validation. The risk is lower on a single-user device, but the GUI limits are not a system-wide security boundary. Before public distribution, restrict write access through a dedicated user group or a separately authorized helper.
 
-3. **선택적 UMR 소스 설치 — 중간·조건부**
-   동봉된 `bc250-cu-live-manager`의 수동 `install-umr` 기능은 특정 커밋이나 릴리스 해시로 고정하지 않은 원격 기본 브랜치를 받아 root 권한으로 빌드·설치할 수 있습니다. GUI의 `구성요소 설치` 버튼은 이 경로를 사용하지 않고 검증된 번들 UMR을 사용합니다. 그래도 배포본에서는 해당 수동 기능을 제거하거나 변경 불가능한 버전과 검증 해시로 고정해야 합니다.
+3. **Optional UMR source installation — Medium, conditional**
+   The manual `install-umr` function in the bundled `bc250-cu-live-manager` can clone a remote default branch that is not pinned to an immutable commit or release hash, then build and install it as root. The GUI's `Install components` button does not use this path; it installs the verified bundled UMR binary. The manual function should nevertheless be removed from a public package or pinned to an immutable version with a verified hash.
 
-현재 확인된 긍정적인 근거는 다음과 같습니다.
+Evidence confirmed during the current review:
 
-- `VENDOR-MANIFEST.json`에 등록된 설치 파일 15개가 모두 기록된 SHA-256과 일치했습니다.
-- 동봉 Governor 실행본과 라이선스가 공식 [v0.4.11 릴리스](https://github.com/filippor/cyan-skillfish-governor/releases/tag/v0.4.11) 압축본의 파일과 일치했습니다.
-- 동봉 UMR의 GNU build ID가 [Fedora 43 `1.0.10-6.fc43` 패키지 기록](https://packages.fedoraproject.org/pkgs/umr/umr/fedora-43.html)과 일치했습니다.
-- 2026-08-02 Microsoft Defender 검사에서 프로젝트 파일에 대한 위협은 발견되지 않았습니다.
-- 소스에서 비밀키, API 토큰 또는 외부 네트워크 리스너는 발견되지 않았습니다.
-- 단위 테스트 124개 중 122개가 통과하고 1개는 건너뛰었습니다. 나머지 1개는 Windows 검증 환경에 GTK/PyGObject가 없어 실패했으며 Bazzite 대상 실행 검사는 별도로 필요합니다.
+- All 15 installation files listed in `VENDOR-MANIFEST.json` matched their recorded SHA-256 hashes.
+- The bundled Governor executable and license matched the files in the official [v0.4.11 release](https://github.com/filippor/cyan-skillfish-governor/releases/tag/v0.4.11) archive.
+- The GNU build ID of the bundled UMR executable matched the [Fedora 43 `1.0.10-6.fc43` package record](https://packages.fedoraproject.org/pkgs/umr/umr/fedora-43.html).
+- Microsoft Defender found no threats in the project files during the 2026-08-02 scan.
+- No private key, API token, or external network listener was found in the source.
+- Of 124 unit tests, 122 passed and one was skipped. The remaining test failed because GTK/PyGObject was unavailable in the Windows verification environment; the Bazzite target check must still be performed separately.
 
-위 결과만으로 동봉 바이너리가 절대 안전하다고 증명되는 것은 아닙니다. 실행본 자체는 전체 소스 감사를 거치지 않았으며, 바이러스 검사와 해시 일치는 각각 알려진 위협 탐지와 파일 동일성만 확인합니다. 공개 릴리스에는 서명된 태그·체크섬 또는 배포판 서명을 사용하는 것이 좋습니다.
+These results do not prove that the bundled binaries are absolutely safe. The executables have not received a complete source audit, while antivirus scanning and hash matching confirm only known-threat detection and file identity respectively. Public releases should use signed tags, signed checksums, or distribution package signatures.
 
-## 저작권과 재배포
+## Copyright and redistribution
 
-- `cyan-skillfish-governor-smu`와 UMR의 MIT 원문 및 저작권 고지는 `vendor/licenses/`와 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)에 포함되어 있습니다.
-- **현재 프로젝트 루트에는 프로젝트 자체 `LICENSE` 파일이 없습니다.** 따라서 프로젝트 고유 코드에는 기본 저작권이 적용되고, 제3자에게 사용·수정·재배포할 명시적 권한이 부여되지 않은 상태입니다. Git 저장소를 공개 배포하기 전에 저작권자가 프로젝트 라이선스를 선택해 추가해야 합니다. 자세한 기본 동작은 [GitHub의 저장소 라이선스 안내](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/licensing-a-repository)를 참고하십시오.
-- 사전 빌드된 Governor 실행본은 정적으로 포함된 Rust 의존성의 전체 라이선스 목록이나 SBOM이 별도로 정리되어 있지 않습니다. 바이너리를 제3자에게 배포하려면 전이 의존성 라이선스를 확인하고 필요한 고지를 추가해야 합니다.
-- 이 저장소는 AMD, Bazzite, Fedora 또는 동봉 도구 개발자의 공식 제품이 아닙니다. 각 이름과 상표의 권리는 해당 소유자에게 있습니다.
+- The original MIT license text and copyright notices for `cyan-skillfish-governor-smu` and UMR are included under `vendor/licenses/` and in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+- **There is currently no project-level `LICENSE` file in the repository root.** The project's original code is therefore covered by default copyright, and no explicit permission is granted to third parties to use, modify, or redistribute it. The copyright holder should select and add a project license before public distribution. See [GitHub's repository licensing guide](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/licensing-a-repository) for details.
+- The prebuilt Governor executable does not currently include a separate complete license inventory or SBOM for statically linked Rust dependencies. Review transitive dependency licenses and add any required notices before distributing the binary to third parties.
+- This repository is not an official product of AMD, Bazzite, Fedora, or the developers of the bundled tools. All names and trademarks belong to their respective owners.
 
-공개 배포 전 최소 점검 목록:
+Minimum checklist before public distribution:
 
-- [ ] Polkit `AUTH_ADMIN_KEEP` 제거 또는 전용 동작으로 교체
-- [ ] 거버너 D-Bus 쓰기 권한 제한
-- [ ] 수동 `install-umr` 다운로드 제거 또는 버전·해시 고정
-- [ ] 프로젝트 자체 `LICENSE` 추가
-- [ ] 동봉 바이너리의 전이 라이선스와 SBOM 정리
-- [ ] Bazzite 대상 장치에서 설치·제거·재부팅 테스트 재실행
+- [ ] Remove Polkit `AUTH_ADMIN_KEEP` or replace it with a dedicated action
+- [ ] Restrict Governor D-Bus write permission
+- [ ] Remove the manual `install-umr` download or pin it to a version and verified hash
+- [ ] Add a project-level `LICENSE`
+- [ ] Document transitive binary licenses and produce an SBOM
+- [ ] Repeat installation, removal, and reboot testing on a Bazzite target device
 
-## 프로젝트 구조
+## Project structure
 
 ```text
-app.py                    GTK4 애플리케이션 진입점
-bc250/                    상태, 환경 검사, 제어와 GUI 모듈
-bc250_install.py          검증된 번들 설치·제거 도우미
-bc250_privileged.py       제한된 영구 설정 도우미
-vendor/                   버전 고정 실행본, 서비스 템플릿과 라이선스
-VENDOR-MANIFEST.json      설치 파일 해시와 출처
-screenshot.png            Bazzite GNOME 실제 실행 화면
-run.sh                    위치 독립 실행기
-install-app.sh            GNOME 앱 목록 등록
-uninstall-app.sh          GNOME 앱 목록 등록 제거
-tests/                    unittest 및 실행 검증
+app.py                    GTK4 application entry point
+bc250/                    Status, environment detection, control, and GUI modules
+bc250_install.py          Verified bundle installer and removal helper
+bc250_privileged.py       Restricted persistent-setting helper
+vendor/                   Pinned binaries, service templates, and licenses
+VENDOR-MANIFEST.json      Installation file hashes and provenance
+screenshot.png            Actual Bazzite GNOME application screenshot
+README.ko.md              Korean documentation
+run.sh                    Location-independent launcher
+install-app.sh            GNOME app-grid registration
+uninstall-app.sh          GNOME app-grid registration removal
+tests/                    unittest and execution validation
 ```
 
-## 복구와 제거
+## Recovery and removal
 
-영구 설정을 바꾸기 전에 다음 백업을 만듭니다.
+The following backups are created before persistent settings are changed:
 
 - `/etc/cyan-skillfish-governor-smu/config.toml.bc250-backup`
 - `/etc/bc250-cu-live-manager.conf.bc250-backup`
 
-앱 목록 등록만 제거하려면 다음 파일을 실행합니다.
+To remove only the GNOME app-grid registration, run:
 
 ```bash
 ./uninstall-app.sh
 ```
 
-번들로 설치한 시스템 구성요소를 제거하려면 프로젝트 폴더에서 다음 설치기 작업을 실행할 수 있습니다.
+To remove the system components installed from the bundle, run the installer removal operation from the project directory:
 
 ```bash
 pkexec python3 ./bc250_install.py remove --project-root "$PWD"
 ```
 
-제거기는 매니페스트에 명시한 파일만 대상으로 하며 설정 백업은 보존합니다. 프로젝트 폴더 자체는 삭제하지 않습니다.
+The remover targets only files listed in the manifest and preserves configuration backups. It does not delete the project directory.
 
-## 문제 해결
+## Troubleshooting
 
-### GUI가 열리지 않음
+### The GUI does not open
 
-`./run.sh --check`로 Python, GTK4, 번들 해시와 지원 플랫폼 판정을 확인합니다. Bazzite GNOME 이미지에는 필요한 Python GTK4 바인딩이 기본 제공됩니다.
+Run `./run.sh --check` to verify Python, GTK4, bundle hashes, and target-platform detection. Bazzite GNOME images include the required Python GTK4 bindings by default.
 
-### 번들 SHA-256 오류
+### Bundle SHA-256 error
 
-파일이 손상되거나 변경된 상태입니다. 시스템 설치를 진행하지 말고 Git에서 깨끗한 사본을 다시 받으십시오. 해시 검사를 끄는 옵션은 제공하지 않습니다.
+A file is damaged or has been modified. Do not proceed with system installation. Obtain a clean copy from Git. There is no option to disable hash verification.
 
-### UMR 호환 실패
+### UMR compatibility failure
 
-현재 Bazzite 기반 버전의 LLVM 등 공유 라이브러리가 번들 실행본과 맞지 않는 상태입니다. 프로그램이 안내하는 배포판 패키지 설치 경로를 사용하고 rpm-ostree가 요구하면 재부팅하십시오.
+The bundled executable does not match a shared library such as LLVM in the current Bazzite base version. Use the distribution package path shown by the application and reboot once if rpm-ostree requires it.
 
-### CU 수가 `확인 불가`
+### CU count shows `Unavailable`
 
-이번 부팅의 `bc250-cu-live-manager.service` 성공 로그와 저장 마스크를 모두 확인할 수 있을 때만 확정값을 표시합니다. 추정값을 40 CU라고 표시하지 않습니다.
+The application displays a confirmed value only when it can verify both a successful `bc250-cu-live-manager.service` log for the current boot and the saved mask. It never guesses that the GPU has 40 CUs.
 
-### 온도·전력·클럭이 `확인 불가`
+### Temperature, power, or clock shows `Unavailable`
 
-AMDGPU hwmon 경로가 없거나 드라이버가 해당 센서를 공개하지 않은 경우입니다. 화면이 정상 출력되더라도 누락된 센서값은 임의로 만들지 않습니다.
+The AMDGPU hwmon path is missing or the driver does not expose the corresponding sensor. Even when the display is functioning normally, the application does not fabricate unavailable sensor values.
 
-### 거버너 적용 실패
+### Governor setting fails
 
-다른 거버너가 동시에 실행 중인지 확인하십시오. 이 프로그램은 `cyan-skillfish-governor-smu.service`만 제어 대상으로 사용합니다.
+Check whether another governor is running at the same time. This application controls only `cyan-skillfish-governor-smu.service`.
 
-## 테스트
+## Tests
 
-호스트 시스템 설정을 바꾸지 않는 전체 테스트는 다음과 같이 실행합니다.
+Run all host-safe tests with:
 
 ```bash
 ./tests/run-tests.sh
 ./run.sh --check
 ```
 
-권한 도우미 테스트는 임시 루트 디렉터리를 사용하므로 실제 `/etc`, systemd 서비스나 GPU 레지스터를 수정하지 않습니다.
+Privileged-helper tests use a temporary root directory and do not modify the real `/etc` tree, systemd services, or GPU registers.
 
-## 주의사항
+## Warning
 
-BC-250의 CU 활성화, 클럭과 전압 변경은 시스템 멈춤, 화면 손실, 데이터 손상, 발열 증가를 일으킬 수 있습니다. 안정적인 전원과 능동 냉각을 사용하고 중요한 작업을 저장한 뒤 설정을 변경하십시오. 프로그램은 위험한 값을 제한하고 백업을 만들지만 개별 보드의 안정성을 보증하지 않습니다.
+Enabling BC-250 CUs or changing clocks and voltage can cause system freezes, loss of display output, data corruption, and increased heat. Use a stable power supply and active cooling, and save important work before changing settings. The application restricts dangerous values and creates backups, but it cannot guarantee the stability of every individual board.
