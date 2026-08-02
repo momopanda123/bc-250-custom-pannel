@@ -39,6 +39,7 @@ class BootstrapReport:
     umr_installed: bool
     helper_installed: bool
     cpu_mode_installed: bool
+    support_installed: bool = True
 
     @property
     def ready(self) -> bool:
@@ -50,6 +51,7 @@ class BootstrapReport:
             and self.umr_installed
             and self.helper_installed
             and self.cpu_mode_installed
+            and self.support_installed
         )
 
 
@@ -94,6 +96,27 @@ def verify_bundle(project_root: Path) -> BundleReport:
             continue
         checked.append(rel)
     return BundleReport(not errors, tuple(checked), tuple(errors))
+
+
+def installed_component_matches(
+    project_root: Path,
+    component: dict,
+    system_root: Path = Path("/"),
+) -> bool:
+    project_root = Path(project_root)
+    system_root = Path(system_root)
+    install_path = str(component.get("install_path", ""))
+    rel = str(component.get("path", ""))
+    if not install_path.startswith("/") or ".." in Path(install_path).parts:
+        return False
+    if not rel or not _within(project_root, project_root / rel):
+        return False
+    destination = system_root / install_path.lstrip("/")
+    try:
+        digest = hashlib.sha256(destination.read_bytes()).hexdigest()
+    except OSError:
+        return False
+    return digest == str(component.get("sha256", "")).lower()
 
 
 def _read_os_release() -> str:
@@ -153,22 +176,68 @@ def check_umr_runtime(path: Path, runner: Callable[[Sequence[str]], subprocess.C
     return True, "UMR 공유 라이브러리 확인 완료"
 
 
-def inspect(project_root: Path, skip_platform: bool = False) -> BootstrapReport:
+def inspect(
+    project_root: Path,
+    skip_platform: bool = False,
+    system_root: Path = Path("/"),
+) -> BootstrapReport:
+    project_root = Path(project_root)
+    system_root = Path(system_root)
     bundle = verify_bundle(project_root)
+    try:
+        components = load_manifest(project_root)["components"]
+    except (OSError, ValueError, json.JSONDecodeError, KeyError):
+        components = []
+    by_install_path = {
+        str(component.get("install_path")): component
+        for component in components
+        if component.get("install_path")
+    }
+
+    def compatible(install_path: str) -> bool:
+        component = by_install_path.get(install_path)
+        return bool(
+            component
+            and installed_component_matches(project_root, component, system_root)
+        )
+
+    def installed(install_path: str) -> bool:
+        return (system_root / install_path.lstrip("/")).is_file()
+
     platform_report = (
         PlatformReport(True, True, platform.machine(), True, UserMessage("platform.skipped")) if skip_platform else detect_platform()
+    )
+    governor_installed = (
+        compatible("/etc/cyan-skillfish-governor-smu/cyan-skillfish-governor-smu")
+        and installed("/etc/cyan-skillfish-governor-smu/config.toml")
+        and compatible("/etc/systemd/system/cyan-skillfish-governor-smu.service")
+        and compatible("/etc/dbus-1/system.d/com.cyanskillfish.Governor.conf")
+    )
+    cu_manager_installed = (
+        compatible("/usr/local/bin/bc250-cu-live-manager")
+        and installed("/etc/bc250-cu-live-manager.conf")
+        and compatible("/etc/systemd/system/bc250-cu-live-manager.service")
+    )
+    helper_installed = (
+        compatible("/usr/local/libexec/bc250-custom-pannel-privileged")
+        and compatible("/etc/polkit-1/rules.d/49-bc250-custom-pannel.rules")
+    )
+    support_installed = (
+        compatible("/opt/bc250-custom-pannel/licenses/cyan-skillfish-governor-MIT.txt")
+        and compatible("/opt/bc250-custom-pannel/licenses/umr-MIT.txt")
     )
     return BootstrapReport(
         bundle=bundle,
         platform=platform_report,
-        governor_installed=Path("/etc/cyan-skillfish-governor-smu/cyan-skillfish-governor-smu").is_file(),
-        cu_manager_installed=Path("/usr/local/bin/bc250-cu-live-manager").is_file(),
-        umr_installed=Path("/usr/bin/umr").is_file() or Path("/opt/bc250-custom-pannel/bin/umr").is_file(),
-        helper_installed=Path("/usr/local/libexec/bc250-custom-pannel-privileged").is_file(),
+        governor_installed=governor_installed,
+        cu_manager_installed=cu_manager_installed,
+        umr_installed=installed("/usr/bin/umr") or compatible("/opt/bc250-custom-pannel/bin/umr"),
+        helper_installed=helper_installed,
         cpu_mode_installed=(
-            Path("/etc/bc250-custom-pannel-cpu.conf").is_file()
-            and Path("/etc/systemd/system/bc250-cpu-mode.service").is_file()
+            installed("/etc/bc250-custom-pannel-cpu.conf")
+            and compatible("/etc/systemd/system/bc250-cpu-mode.service")
         ),
+        support_installed=support_installed,
     )
 
 

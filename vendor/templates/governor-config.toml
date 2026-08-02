@@ -37,6 +37,10 @@ throttling = 85
 throttling_recovery = 75
 
 [[safe-points]]
+frequency = 350
+voltage = 700
+
+[[safe-points]]
 frequency = 500
 voltage = 700
 
@@ -64,3 +68,46 @@ voltage = 920
 frequency = 1800
 voltage = 930
 
+[[safe-points]]
+frequency = 1850
+voltage = 930
+
+[[safe-points]]
+frequency = 2000
+voltage = 960
+
+[[safe-points]]
+frequency = 2050
+voltage = 980
+
+[[safe-points]]
+frequency = 2100
+voltage = 1000
+
+[[safe-points]]
+frequency = 2125
+voltage = 1020
+
+[[safe-points]]
+frequency = 2150
+voltage = 1035
+
+[[safe-points]]
+frequency = 2200
+voltage = 1050
+
+[[safe-points]]
+frequency = 2230
+voltage = 1085
+
+[[safe-points]]
+frequency = 2300
+voltage = 1110
+
+[[safe-points]]
+frequency = 2350
+voltage = 1130
+
+[[safe-points]]
+frequency = 2400
+voltage = 1150

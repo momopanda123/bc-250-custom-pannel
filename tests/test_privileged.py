@@ -65,23 +65,23 @@ class PrivilegedHelperTests(unittest.TestCase):
     def test_save_custom_governor_writes_user_frequency_range(self):
         result = run_action(
             "save-governor-custom",
-            {"min_mhz": 600, "max_mhz": 1750, "throttle": 86, "recovery": 76},
+            {"min_mhz": 0, "max_mhz": 4_294_967_295, "throttle": 255, "recovery": 255},
             self.root,
         )
 
         self.assertTrue(result["ok"], result)
         text = (self.root / "etc/cyan-skillfish-governor-smu/config.toml").read_text(encoding="utf-8")
-        self.assertIn("min = 600", text)
-        self.assertIn("max = 1750", text)
-        self.assertIn("throttling = 86", text)
-        self.assertIn("throttling_recovery = 76", text)
+        self.assertIn("min = 0", text)
+        self.assertIn("max = 4294967295", text)
+        self.assertIn("throttling = 255", text)
+        self.assertIn("throttling_recovery = 255", text)
 
     def test_invalid_custom_governor_range_does_not_change_file(self):
         path = self.root / "etc/cyan-skillfish-governor-smu/config.toml"
         before = path.read_bytes()
         result = run_action(
             "save-governor-custom",
-            {"min_mhz": 1750, "max_mhz": 1800, "throttle": 85, "recovery": 75},
+            {"min_mhz": 1800, "max_mhz": 1700, "throttle": 85, "recovery": 75},
             self.root,
         )
 

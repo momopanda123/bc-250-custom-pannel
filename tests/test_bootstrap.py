@@ -5,8 +5,18 @@ import unittest
 from dataclasses import fields
 from pathlib import Path
 
-from bc250.bootstrap import BootstrapReport, BundleReport, PlatformReport, detect_platform, inspect, load_manifest, verify_bundle
+from bc250.bootstrap import (
+    BootstrapReport,
+    BundleReport,
+    PlatformReport,
+    detect_platform,
+    inspect,
+    installed_component_matches,
+    load_manifest,
+    verify_bundle,
+)
 from bc250.messages import UserMessage
+from bc250_install import install_bundle
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -74,6 +84,20 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(report.errors[0].key, "error.bundle_invalid")
         self.assertIn("SHA-256", str(report.errors[0].params["detail"]))
 
+    def test_installed_component_must_match_the_bundled_hash(self):
+        payload = b"new compatible binary"
+        root = self._fixture(payload, hashlib.sha256(payload).hexdigest())
+        component = load_manifest(root)["components"][0]
+        component["install_path"] = "/opt/example/component.bin"
+        system_root = Path(self.tmp.name) / "system"
+        installed = system_root / "opt/example/component.bin"
+        installed.parent.mkdir(parents=True)
+        installed.write_bytes(b"old incompatible binary")
+
+        self.assertFalse(installed_component_matches(root, component, system_root))
+        installed.write_bytes(payload)
+        self.assertTrue(installed_component_matches(root, component, system_root))
+
     def test_only_bazzite_x86_64_bc250_is_supported(self):
         good = detect_platform(
             os_release="ID=fedora\nVARIANT_ID=bazzite\n",
@@ -106,6 +130,28 @@ class BootstrapTests(unittest.TestCase):
             helper_installed=True,
             cpu_mode_installed=False,
         )
+        self.assertFalse(report.ready)
+
+    def test_inspect_requires_governor_service_and_dbus_policy(self):
+        system_root = Path(self.tmp.name) / "installed-system"
+        result = install_bundle(PROJECT_ROOT, system_root, manage_services=False)
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(inspect(PROJECT_ROOT, skip_platform=True, system_root=system_root).ready)
+
+        (system_root / "etc/dbus-1/system.d/com.cyanskillfish.Governor.conf").unlink()
+        report = inspect(PROJECT_ROOT, skip_platform=True, system_root=system_root)
+        self.assertFalse(report.governor_installed)
+        self.assertFalse(report.ready)
+
+    def test_ready_requires_installed_license_support_files(self):
+        self.assertIn("support_installed", {field.name for field in fields(BootstrapReport)})
+        system_root = Path(self.tmp.name) / "installed-system"
+        result = install_bundle(PROJECT_ROOT, system_root, manage_services=False)
+        self.assertTrue(result["ok"], result)
+        (system_root / "opt/bc250-custom-pannel/licenses/umr-MIT.txt").unlink()
+
+        report = inspect(PROJECT_ROOT, skip_platform=True, system_root=system_root)
+        self.assertFalse(report.support_installed)
         self.assertFalse(report.ready)
 
     def test_cpu_mode_bundle_default_preserves_the_existing_cpu_state(self):

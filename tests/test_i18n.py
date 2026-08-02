@@ -15,7 +15,7 @@ REQUIRED_KEYS = {
     "status.cu_applied", "status.cu_mismatch", "status.cu_saved", "status.updated_at",
     "status.cpu_stock", "status.cpu_unlocked", "status.cpu_pending",
     "setup.title", "setup.detail", "setup.install", "setup.required", "setup.ready",
-    "component.governor", "component.cu_manager", "component.umr", "component.helper", "component.cpu_mode",
+    "component.governor", "component.cu_manager", "component.umr", "component.helper", "component.cpu_mode", "component.support",
     "metric.gpu_temperature", "metric.cpu_temperature", "metric.power", "metric.clock",
     "metric.voltage", "metric.fan", "metric.driver_report", "metric.edge_sensor",
     "metric.tctl_sensor", "metric.smu_voltage", "metric.instant_sensor", "metric.fan_auto",

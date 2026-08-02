@@ -1,0 +1,401 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "cyan-skillfish-governor-smu"
+-version = "0.4.0"
++version = "0.4.11-bc250.1"
+ license = "MIT"
+ edition = "2024"
+ build = "build.rs"
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -314,7 +314,7 @@
+ 
+ [[package]]
+ name = "cyan-skillfish-governor-smu"
+-version = "0.4.0"
++version = "0.4.11-bc250.1"
+ dependencies = [
+  "clap",
+  "clap-verbosity-flag",
+--- a/src/config.rs
++++ b/src/config.rs
+@@ -419,24 +419,21 @@
+         temperature,
+         "throttling",
+         "temperature.throttling",
+-        0..=100,
++        0..=255,
+         Some(85),
+         None,
+     )
+-    .map(|v| v as u32);
++    .and_then(|v| (v != 0).then_some(v as u32));
+ 
+-    let throttling_recovery_temp = throttling_temp.and_then(|max_recovery| {
+-        let max_allowed = i64::from(max_recovery.saturating_sub(1));
+-        parse_integer_in_range_optional(
+-            temperature,
+-            "throttling_recovery",
+-            "temperature.throttling_recovery",
+-            1..=max_allowed,
+-            None,
+-            None,
+-        )
+-        .map(|v| v as u32)
+-    });
++    let throttling_recovery_temp = parse_integer_in_range_optional(
++        temperature,
++        "throttling_recovery",
++        "temperature.throttling_recovery",
++        0..=255,
++        None,
++        None,
++    )
++    .and_then(|v| (v != 0).then_some(v as u32));
+ 
+     TemperatureConfig {
+         throttling_temp,
+@@ -862,13 +859,41 @@
+     fn parse_optional_integer_disable_when_out_of_range() {
+         let config_text = r#"
+             [temperature]
+-            throttling = 200
++            throttling = 256
+         "#;
+         let config = parse_config(config_text);
+         assert_eq!(config.temperature.throttling_temp, None);
+     }
+ 
+     #[test]
++    fn parses_full_byte_temperature_values_independently() {
++        let config = parse_config(
++            r#"
++            [temperature]
++            throttling = 255
++            throttling_recovery = 255
++            "#,
++        );
++
++        assert_eq!(config.temperature.throttling_temp, Some(255));
++        assert_eq!(config.temperature.throttling_recovery_temp, Some(255));
++    }
++
++    #[test]
++    fn zero_temperature_values_disable_each_threshold() {
++        let config = parse_config(
++            r#"
++            [temperature]
++            throttling = 0
++            throttling_recovery = 0
++            "#,
++        );
++
++        assert_eq!(config.temperature.throttling_temp, None);
++        assert_eq!(config.temperature.throttling_recovery_temp, None);
++    }
++
++    #[test]
+     fn parse_optional_integer_clamped_disables_when_negative() {
+         let config_text = r#"
+             [temperature]
+--- a/src/dbus.rs
++++ b/src/dbus.rs
+@@ -80,6 +80,22 @@
+         Ok(())
+     }
+ 
++    fn set_tuning(
++        &self,
++        min: u32,
++        max: u32,
++        throttling: u32,
++        recovery: u32,
++    ) -> fdo::Result<()> {
++        let mut gov = self
++            .state
++            .lock()
++            .map_err(|_| fdo::Error::Failed("state lock poisoned".into()))?;
++        gov.apply_tuning_command(min, max, throttling, recovery)
++            .map_err(|err| fdo::Error::InvalidArgs(err.to_string()))?;
++        Ok(())
++    }
++
+     fn set_parameters(
+         &self,
+         min_freq: u32,
+--- a/src/governor.rs
++++ b/src/governor.rs
+@@ -24,6 +24,53 @@
+     target_cycle_interval: Duration,
+ }
+ 
++fn resolve_range(
++    allowed: &RangeInclusive<u32>,
++    startup: &RangeInclusive<u32>,
++    min: u32,
++    max: u32,
++) -> Result<RangeInclusive<u32>> {
++    let (allowed_min, allowed_max) = (*allowed.start(), *allowed.end());
++    if min != 0 && !allowed.contains(&min) {
++        return Err(format!(
++            "min {} out of allowed range {}..={} MHz",
++            min, allowed_min, allowed_max
++        )
++        .into());
++    }
++    if max != 0 && !allowed.contains(&max) {
++        return Err(format!(
++            "max {} out of allowed range {}..={} MHz",
++            max, allowed_min, allowed_max
++        )
++        .into());
++    }
++
++    let resolved_min = if min == 0 { *startup.start() } else { min };
++    let resolved_max = if max == 0 { *startup.end() } else { max };
++    if resolved_min > resolved_max {
++        return Err(format!(
++            "invalid range: effective min {} > effective max {}",
++            resolved_min, resolved_max
++        )
++        .into());
++    }
++    Ok(resolved_min..=resolved_max)
++}
++
++fn normalize_temperature_thresholds(
++    throttling: u32,
++    recovery: u32,
++) -> Result<(Option<u32>, Option<u32>)> {
++    if throttling > 255 || recovery > 255 {
++        return Err("temperature values must be between 0 and 255 Celsius".into());
++    }
++    Ok((
++        (throttling != 0).then_some(throttling),
++        (recovery != 0).then_some(recovery),
++    ))
++}
++
+ impl Governor {
+     pub fn new(
+         params: GovernorParams,
+@@ -177,87 +224,23 @@
+     }
+ 
+     pub fn apply_range_command(&mut self, min: u32, max: u32) -> Result<()> {
++        let requested_range = resolve_range(
++            &self.params.allowed_frequency_range,
++            &self.startup_initial_range,
++            min,
++            max,
++        )?;
+         self.test_mode = false;
+-        let (allowed_min, allowed_max) = (
+-            *self.params.allowed_frequency_range.start(),
+-            *self.params.allowed_frequency_range.end(),
+-        );
+-
+-        if min != 0 && !(allowed_min..=allowed_max).contains(&min) {
+-            return Err(format!(
+-                "min {} out of allowed range {}..={} MHz",
+-                min, allowed_min, allowed_max
+-            )
+-            .into());
+-        }
+-
+-        if max != 0 && !(allowed_min..=allowed_max).contains(&max) {
+-            return Err(format!(
+-                "max {} out of allowed range {}..={} MHz",
+-                max, allowed_min, allowed_max
+-            )
+-            .into());
+-        }
+-
+-        if min != 0 && max != 0 && min > max {
+-            return Err(format!("invalid range: min {} > max {}", min, max).into());
+-        }
+-
+-        match (min, max) {
+-            (0, 0) => {
+-                info!("Frequency range reset: restored initial limits");
+-                self.performance_mode = false;
+-                self.requested_range = self.startup_initial_range.clone();
+-                info!(
+-                    "Updated range : {}..={}",
+-                    self.requested_range.start(),
+-                    self.requested_range.end()
+-                );
+-            }
+-            (0, ma) if self.params.allowed_frequency_range.contains(&ma) => {
+-                info!(
+-                    "Upper limit set to {} MHz, lower limit reset to initial value",
+-                    ma
+-                );
+-                self.performance_mode = false;
+-                self.requested_range = *self.startup_initial_range.start()..=ma;
+-                info!(
+-                    "Updated range : {}..={}",
+-                    self.requested_range.start(),
+-                    self.requested_range.end()
+-                );
+-            }
+-            (mi, 0) if self.params.allowed_frequency_range.contains(&mi) => {
+-                info!(
+-                    "Lower limit set to {} MHz, upper limit reset to initial value",
+-                    mi
+-                );
+-                self.performance_mode = false;
+-                self.requested_range = mi..=*self.startup_initial_range.end();
+-                info!(
+-                    "Updated range : {}..={}",
+-                    self.requested_range.start(),
+-                    self.requested_range.end()
+-                );
+-            }
+-            (mi, ma)
+-                if self.params.allowed_frequency_range.contains(&mi)
+-                    && self.params.allowed_frequency_range.contains(&ma) =>
+-            {
+-                info!("Frequency range set: min={} MHz, max={} MHz", mi, ma);
+-                self.performance_mode = false;
+-                self.requested_range = mi..=ma;
+-                info!(
+-                    "Updated range : {}..={}",
+-                    self.requested_range.start(),
+-                    self.requested_range.end()
+-                );
+-            }
+-            _ => unreachable!("range validation should have rejected invalid input"),
+-        }
++        self.performance_mode = false;
++        self.requested_range = requested_range;
+         if self.max_freq > *self.requested_range.end() {
+             self.max_freq = *self.requested_range.end();
+         }
++        info!(
++            "Frequency range set: {}..={} MHz",
++            self.requested_range.start(),
++            self.requested_range.end()
++        );
+         Ok(())
+     }
+     pub fn target_cycle_interval(&self) -> Duration {
+@@ -288,40 +271,53 @@
+         throttling: u32,
+         recovery: u32,
+     ) -> Result<()> {
+-        // Validate all inputs
+-        if throttling != 0 && !(1..=95).contains(&throttling) {
+-            return Err(
+-                "temperature throttling must be between 1 and 95 Celsius, or 0 to ignore".into(),
+-            );
+-        }
+-        // Determine the effective throttling temperature for validation
+-        let effective_throttling = if throttling != 0 {
+-            Some(throttling)
+-        } else {
+-            self.params.temperature.throttling_temp
+-        };
++        let (throttling_temp, recovery_temp) =
++            normalize_temperature_thresholds(throttling, recovery)?;
++        self.params.temperature.throttling_temp = throttling_temp;
++        self.params.temperature.throttling_recovery_temp = recovery_temp;
+ 
+-        if recovery != 0 && recovery > effective_throttling.unwrap_or(0) {
+-            return Err(
+-                "temperature recovery must be lower than throttling, or 0 to ignore".into(),
+-            );
+-        } else {
++        if self.max_freq > *self.requested_range.end() {
++            self.max_freq = *self.requested_range.end();
+         }
++        info!(
++            "Temperature thresholds updated at runtime: throttling={}C, recovery={}C",
++            self.params.temperature.throttling_temp.unwrap_or(0),
++            self.params
++                .temperature
++                .throttling_recovery_temp
++                .unwrap_or(0)
++        );
++        Ok(())
++    }
+ 
+-        // Only modify after all validations pass
+-
+-        if throttling != 0 {
+-            self.params.temperature.throttling_temp = effective_throttling;
+-        }
+-        if recovery != 0 {
+-            self.params.temperature.throttling_recovery_temp = Some(recovery);
+-        }
++    pub fn apply_tuning_command(
++        &mut self,
++        min: u32,
++        max: u32,
++        throttling: u32,
++        recovery: u32,
++    ) -> Result<()> {
++        let requested_range = resolve_range(
++            &self.params.allowed_frequency_range,
++            &self.startup_initial_range,
++            min,
++            max,
++        )?;
++        let (throttling_temp, recovery_temp) =
++            normalize_temperature_thresholds(throttling, recovery)?;
+ 
++        self.test_mode = false;
++        self.performance_mode = false;
++        self.requested_range = requested_range;
++        self.params.temperature.throttling_temp = throttling_temp;
++        self.params.temperature.throttling_recovery_temp = recovery_temp;
+         if self.max_freq > *self.requested_range.end() {
+             self.max_freq = *self.requested_range.end();
+         }
+         info!(
+-            "Temperature thresholds updated at runtime: throttling={}C, recovery={}C",
++            "Tuning updated atomically: range={}..={} MHz, throttling={}C, recovery={}C",
++            self.requested_range.start(),
++            self.requested_range.end(),
+             self.params.temperature.throttling_temp.unwrap_or(0),
+             self.params
+                 .temperature
+@@ -458,7 +454,7 @@
+ 
+ #[cfg(test)]
+ mod tests {
+-    use super::compute_frequency_decision;
++    use super::{compute_frequency_decision, normalize_temperature_thresholds, resolve_range};
+     use crate::config::{GovernorParams, TemperatureConfig};
+ 
+     fn sample_params() -> GovernorParams {
+@@ -523,4 +519,27 @@
+         assert_eq!(status, 0);
+         assert!(!should_apply);
+     }
++
++    #[test]
++    fn tuning_temperature_accepts_the_full_byte_domain_independently() {
++        assert_eq!(
++            normalize_temperature_thresholds(255, 255).unwrap(),
++            (Some(255), Some(255))
++        );
++        assert_eq!(
++            normalize_temperature_thresholds(0, 255).unwrap(),
++            (None, Some(255))
++        );
++    }
++
++    #[test]
++    fn tuning_range_resolves_open_bounds_against_the_allowed_curve() {
++        let allowed = 350..=2400;
++        let startup = 500..=1800;
++
++        assert_eq!(resolve_range(&allowed, &startup, 0, 2400).unwrap(), 500..=2400);
++        assert_eq!(resolve_range(&allowed, &startup, 350, 0).unwrap(), 350..=1800);
++        assert!(resolve_range(&allowed, &startup, 349, 1800).is_err());
++        assert!(resolve_range(&allowed, &startup, 500, 2401).is_err());
++    }
+ }

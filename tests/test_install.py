@@ -9,7 +9,7 @@ from unittest.mock import patch
 import bc250_install as install_module
 from bc250.bootstrap import PlatformReport
 from bc250.messages import UserMessage
-from bc250_install import install_bundle, remove_bundle, service_commands
+from bc250_install import extend_governor_curve, install_bundle, remove_bundle, service_commands
 
 
 class InstallTests(unittest.TestCase):
@@ -89,11 +89,66 @@ class InstallTests(unittest.TestCase):
                     "busctl", "--system", "call", "org.freedesktop.DBus", "/org/freedesktop/DBus",
                     "org.freedesktop.DBus", "ReloadConfig",
                 ],
-                ["systemctl", "enable", "--now", "cyan-skillfish-governor-smu.service"],
+                ["systemctl", "enable", "cyan-skillfish-governor-smu.service"],
+                ["systemctl", "restart", "cyan-skillfish-governor-smu.service"],
                 ["systemctl", "enable", "bc250-cu-live-manager.service"],
                 ["systemctl", "enable", "--now", "bc250-cpu-mode.service"],
             ],
         )
+
+    def test_known_legacy_curve_is_extended_without_changing_active_settings(self):
+        legacy = """[frequency-range]
+min = 500
+max = 1800
+
+[temperature]
+throttling = 90
+throttling_recovery = 85
+
+[[safe-points]]
+frequency = 500
+voltage = 700
+[[safe-points]]
+frequency = 1000
+voltage = 800
+[[safe-points]]
+frequency = 1175
+voltage = 850
+[[safe-points]]
+frequency = 1500
+voltage = 900
+[[safe-points]]
+frequency = 1600
+voltage = 910
+[[safe-points]]
+frequency = 1700
+voltage = 920
+[[safe-points]]
+frequency = 1800
+voltage = 930
+"""
+
+        updated, changed = extend_governor_curve(legacy)
+
+        self.assertTrue(changed)
+        self.assertIn("min = 500\nmax = 1800", updated)
+        self.assertIn("throttling = 90\nthrottling_recovery = 85", updated)
+        self.assertIn("frequency = 350\nvoltage = 700", updated)
+        self.assertIn("frequency = 2400\nvoltage = 1150", updated)
+
+    def test_unknown_custom_curve_is_not_rewritten(self):
+        custom = """[[safe-points]]
+frequency = 600
+voltage = 750
+[[safe-points]]
+frequency = 1900
+voltage = 990
+"""
+
+        updated, changed = extend_governor_curve(custom)
+
+        self.assertFalse(changed)
+        self.assertEqual(updated, custom)
 
     def test_remove_commands_disable_the_persistent_cpu_mode_service(self):
         self.assertTrue(hasattr(install_module, "remove_service_commands"), "remove service plan is missing")
@@ -209,6 +264,39 @@ class InstallTests(unittest.TestCase):
         unit = Path("vendor/templates/cyan-skillfish-governor-smu.service").read_text(encoding="utf-8")
         self.assertNotIn("Wants=bc250-cu-live-manager.service", unit)
         self.assertNotIn("After=bc250-cu-live-manager.service", unit)
+
+    def test_cu_service_uses_the_bundled_umr_installed_by_the_button(self):
+        unit = Path("vendor/templates/bc250-cu-live-manager.service").read_text(encoding="utf-8")
+        self.assertIn("Environment=UMR=/opt/bc250-custom-pannel/bin/umr", unit)
+
+    def test_production_install_materializes_every_declared_system_file(self):
+        project = Path(__file__).resolve().parents[1]
+        result = install_bundle(project, self.root, manage_services=False)
+        self.assertTrue(result["ok"], result)
+        expected = {
+            "etc/cyan-skillfish-governor-smu/cyan-skillfish-governor-smu": "0755",
+            "usr/local/bin/bc250-cu-live-manager": "0755",
+            "opt/bc250-custom-pannel/bin/umr": "0755",
+            "etc/cyan-skillfish-governor-smu/config.toml": "0644",
+            "etc/bc250-cu-live-manager.conf": "0644",
+            "etc/bc250-custom-pannel-cpu.conf": "0644",
+            "etc/systemd/system/cyan-skillfish-governor-smu.service": "0644",
+            "etc/systemd/system/bc250-cu-live-manager.service": "0644",
+            "etc/systemd/system/bc250-cpu-mode.service": "0644",
+            "etc/dbus-1/system.d/com.cyanskillfish.Governor.conf": "0644",
+            "etc/polkit-1/rules.d/49-bc250-custom-pannel.rules": "0644",
+            "usr/local/libexec/bc250-custom-pannel-privileged": "0755",
+            "opt/bc250-custom-pannel/licenses/cyan-skillfish-governor-MIT.txt": "0644",
+            "opt/bc250-custom-pannel/licenses/umr-MIT.txt": "0644",
+        }
+        installed = {Path(path).relative_to(self.root).as_posix() for path in result["installed"]}
+        self.assertEqual(installed, set(expected))
+        for relative, mode in expected.items():
+            with self.subTest(relative=relative):
+                destination = self.root / relative
+                self.assertTrue(destination.is_file())
+                if os.name != "nt":
+                    self.assertEqual(destination.stat().st_mode & 0o777, int(mode, 8))
 
     def test_install_and_cpu_mode_are_one_root_transaction(self):
         self.assertTrue(

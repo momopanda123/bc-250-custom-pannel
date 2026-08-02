@@ -4,9 +4,11 @@
 
 ## cyan-skillfish-governor-smu
 
-- Version: v0.4.11
+- Upstream base: v0.4.11, commit `60ab6e5b354f01f287c73d920990dcd618a674cc`
+- Bundled derivative version: `0.4.11-bc250.1`
 - Upstream: https://github.com/filippor/cyan-skillfish-governor
 - Release: https://github.com/filippor/cyan-skillfish-governor/releases/tag/v0.4.11
+- Source changes: `vendor/patches/cyan-skillfish-governor-smu-v0.4.11-bc250.1.patch`
 - License: MIT
 - Copyright: Marcus Medom Ryding and contributors
 - License copy: `vendor/licenses/cyan-skillfish-governor-MIT.txt`

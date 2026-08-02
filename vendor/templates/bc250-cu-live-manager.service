@@ -6,10 +6,10 @@ Wants=systemd-udev-settle.service
 [Service]
 Type=oneshot
 EnvironmentFile=-/etc/bc250-cu-live-manager.conf
+Environment=UMR=/opt/bc250-custom-pannel/bin/umr
 ExecStartPre=/usr/bin/bash -c 'for _ in {1..30}; do compgen -G "/dev/dri/renderD*" >/dev/null && exit 0; sleep 1; done; exit 1'
 ExecStart=/usr/local/bin/bc250-cu-live-manager --yes apply-service
 RemainAfterExit=yes
 
 [Install]
 WantedBy=multi-user.target
-

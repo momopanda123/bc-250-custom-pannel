@@ -13,6 +13,7 @@ from pathlib import Path
 
 PRESETS = {"eco": 1500, "balanced": 1700, "performance": 1800}
 CU_MASKS = {24: "0x07,0x07,0x07,0x07", 32: "0x0f,0x0f,0x0f,0x0f", 40: "0x1f,0x1f,0x1f,0x1f"}
+UINT32_MAX = (1 << 32) - 1
 CPU_MODE_CONFIG = "/etc/bc250-custom-pannel-cpu.conf"
 CPU_SYS_ROOT = "/sys/devices/system/cpu"
 
@@ -30,16 +31,18 @@ def _result(ok: bool, message_id: str, message: str, message_args: dict | None =
 def _validate_temperature(throttle: int, recovery: int) -> tuple[int, int]:
     throttle = int(throttle)
     recovery = int(recovery)
-    if not 80 <= throttle <= 90 or not 5 <= throttle - recovery <= 15:
-        raise ValueError("허용되지 않은 온도 범위입니다.")
+    if not 0 <= throttle <= 255 or not 0 <= recovery <= 255:
+        raise ValueError("Temperature values must be between 0 and 255.")
     return throttle, recovery
 
 
 def _validate_frequency_range(min_mhz: int, max_mhz: int) -> tuple[int, int]:
     min_mhz = int(min_mhz)
     max_mhz = int(max_mhz)
-    if not 500 <= min_mhz <= 1800 or not 500 <= max_mhz <= 1800 or max_mhz - min_mhz < 100:
-        raise ValueError("GPU 클럭 범위는 500~1800 MHz이며 최소 100 MHz 간격이 필요합니다.")
+    if not 0 <= min_mhz <= UINT32_MAX or not 0 <= max_mhz <= UINT32_MAX:
+        raise ValueError("GPU clock values must be unsigned 32-bit integers.")
+    if min_mhz and max_mhz and min_mhz > max_mhz:
+        raise ValueError("GPU clock minimum cannot exceed the maximum when both bounds are set.")
     return min_mhz, max_mhz
 
 

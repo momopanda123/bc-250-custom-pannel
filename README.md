@@ -2,7 +2,7 @@
 
 # BC-250 Custom Pannel
 
-BC-250 Custom Pannel is a GTK4 control panel for AMD BC-250 systems running Bazzite. It provides a single interface for monitoring GPU status and firmware information and for applying validated performance settings. The `Pannel` spelling is intentionally retained for compatibility with the existing project path.
+BC-250 Custom Pannel is a GTK4 control panel for AMD BC-250 systems running Bazzite. It provides a single interface for monitoring GPU status and firmware information and for applying performance settings. The `Pannel` spelling is intentionally retained for compatibility with the existing project path.
 
 This project is more than a Python GUI. It includes the GPU governor, CU boot manager, a Bazzite 43-compatible UMR binary, service files, and policy templates required at runtime. Their versions and SHA-256 hashes are pinned in the repository.
 
@@ -14,13 +14,13 @@ The image above shows the application running on Bazzite GNOME. Temperature, pow
 
 - Shows the current CPU core/thread count and GPU CU count together in the top summary
 - Refreshes CPU/GPU temperature, GPU power, clock, voltage, and fan RPM every second
-- Provides Power Saving, Balanced, and Performance presets plus a custom 500–1800 MHz GPU clock range
+- Provides Power Saving, Balanced, and Performance presets plus user-defined GPU clock bounds across the governor's full `u32` input range
 - Configures throttle and recovery temperatures using a validated voltage curve
 - Saves 24, 32, or 40 CU profiles for the next boot
 - Toggles between 6C/12T and 8C/16T according to the current CPU state
 - Controls automatic suspend and display-off timers with Disabled, preset, and custom 1–240 minute options
 - Displays BIOS and kernel information and supports Korean, English, Japanese, and Simplified Chinese
-- Checks required components and installs only the missing items in one operation
+- Checks executables, configuration, services, policies, and license files and updates missing or incompatible items in one operation
 
 ## Supported systems
 
@@ -39,7 +39,7 @@ From the cloned project directory, run:
 ./run.sh
 ```
 
-The GUI opens first. The component status row is always visible, while the `Install components` button is enabled only when the governor, CU manager, UMR, privileged helper, or CPU mode service is missing. After you press the button once and complete system authentication, the installer verifies the SHA-256 hash of every bundled file and installs the missing files and services. The button is disabled when everything is present. No separate downloads or installation commands are required.
+The GUI opens first. The component status row is always visible, while the `Install components` button is enabled when a governor, CU manager, UMR, privileged helper, CPU mode component, systemd unit, D-Bus policy, Polkit rule, or license file is missing or incompatible. After one press and system authentication, the installer verifies every bundled SHA-256 and installs or updates all 14 manifest-declared system files at fixed paths and modes. It rechecks compatibility before enabling the Apply and Save buttons. The install button is disabled only when the complete compatible set is present.
 
 To register the application in the GNOME app grid, run once:
 
@@ -102,15 +102,16 @@ The information is read from `/sys/class/dmi/id` and the running kernel. Adminis
 | Balanced | 500–1700 MHz | 920 mV | Balance between performance and efficiency |
 | Performance | 500–1800 MHz | 930 mV | Highest setting validated on the current system |
 
-`Apply now` sends the setting only to the governor D-Bus service; the saved configuration is restored after a reboot. `Apply and save` requests system authentication, backs up the existing configuration, atomically replaces the configuration file, and restarts the governor service.
+`Apply now` sends the clock range and both temperature values as one atomic D-Bus request. If any of the four values cannot be applied, none of them are changed; the saved configuration is restored after a reboot. `Apply and save` requests system authentication, backs up the existing configuration, atomically replaces the configuration file, and restarts the governor service.
 
-Selecting `Custom` below the presets allows direct minimum and maximum GPU clock configuration within 500–1800 MHz. The values must be at least 100 MHz apart. Throttle and recovery temperatures are configured on the same screen. The governor's runtime API controls frequency and temperature, while voltage follows the installed validated safe-point curve. The application therefore does not expose a separate voltage field that the governor cannot actually apply.
+Selecting `Custom` below the presets allows direct minimum and maximum GPU clock configuration from 0 to 4,294,967,295 MHz, matching the governor D-Bus interface's unsigned 32-bit fields. A value of `0` leaves that bound open. When both bounds are nonzero, minimum must not exceed maximum; the application does not impose the former 500–1800 MHz range or a 100 MHz gap. The bundled voltage curve covers 350–2400 MHz while the default operating range remains 500–1800 MHz. Values above 2400 MHz can be applied only after the user adds an appropriate voltage point to the Governor configuration.
 
-Throttle temperature is limited to 80–90°C, and recovery temperature must be 5–15°C below the throttle temperature. The GUI label `Recovery gap` represents the actual recovery temperature, not a time interval. For example, 85°C/75°C begins limiting performance at 85°C and releases the limit after cooling to 75°C. Invalid values are rejected before any system command is executed.
+Throttle and recovery temperature fields each accept 0–255°C. The patched bundled Governor handles the same range independently without imposing ordering or a hysteresis gap; `0` disables that threshold. Defaults remain 85°C/75°C. A failed persistent service restart restores the previous configuration.
 
 ## Safety limits
 
-- Custom GPU clock settings are limited to 500–1800 MHz and require at least a 100 MHz gap.
+- Custom GPU clock fields accept the full unsigned 32-bit range; `0` means an open bound, and two nonzero bounds must be ordered minimum first.
+- Throttle and recovery fields independently accept 0–255°C without an application-defined gap.
 - Arbitrary voltage input is not provided; the application uses the validated safe-point curve.
 - Voltages below 700 mV are not provided.
 - This is not an exact wattage limiter. Power is displayed from sensors and is controlled indirectly through clock and voltage presets.
@@ -143,15 +144,15 @@ Exact files, source URLs, installation paths, modes, and SHA-256 hashes are reco
 
 | Component | Pinned version | Purpose |
 |---|---|---|
-| cyan-skillfish-governor-smu | v0.4.11 | SMU-based GPU clock and temperature management |
+| cyan-skillfish-governor-smu | v0.4.11-bc250.1 | SMU management with atomic clock/temperature updates and 0–255°C support |
 | bc250-cu-live-manager | Project-validated copy | Applies next-boot WGP/CU profiles |
 | UMR | 1.0.10-6.fc43 | Accesses BC-250 GPU registers |
 | Privileged helper | 0.2.0 | Applies validated settings with administrator privileges |
 | CPU mode service | 1 | Applies the selected online/offline CPU state during boot |
 
-The governor and UMR are distributed under the MIT License. Their original license text and copyright notices are included under `vendor/licenses/` and in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), and are copied to the writable Bazzite path `/opt/bc250-custom-pannel/licenses/` during installation. The Polkit rule is installed under `/etc/polkit-1/rules.d/` instead of the read-only `/usr/share` tree. The installer writes no system files if any manifest hash differs. The manifest is not digitally signed, however, so the hash check detects file corruption and individual modifications but cannot prove provenance if both the repository and manifest are compromised together.
+The governor and UMR are distributed under the MIT License. The Governor changes are included as a reproducible source patch under `vendor/patches/`, while original license text and copyright notices remain under `vendor/licenses/` and in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). The Polkit rule is installed under `/etc/polkit-1/rules.d/` instead of the read-only `/usr/share` tree. The installer writes no system files if any manifest hash differs. The manifest is not digitally signed, however, so the hash check detects file corruption and individual modifications but cannot prove provenance if both the repository and manifest are compromised together.
 
-The bundled UMR binary was validated on Bazzite 43 x86_64. It is not forced into use when `ldd` reports a missing shared library. A later Bazzite base version may require the distribution UMR package and one reboot after rpm-ostree applies the change.
+The bundled UMR binary was validated on Bazzite 43 x86_64. The CU boot service explicitly selects the installed `/opt/bc250-custom-pannel/bin/umr`. It is not forced into use when `ldd` reports a missing shared library. A later Bazzite base version may require the distribution UMR package and one reboot after rpm-ostree applies the change.
 
 ## Installation scope and administrator privileges
 
@@ -186,19 +187,19 @@ The services run as root because they need access to GPU registers and system co
    `vendor/templates/49-bc250-custom-pannel.rules` uses `AUTH_ADMIN_KEEP` with the generic `org.freedesktop.policykit.exec` action. After the administrator password is entered, approval may be reused by a different `pkexec` program during the short authorization-retention window. Before distribution, replace it with `AUTH_ADMIN` or define a dedicated Polkit action with a fixed executable. The [official Polkit documentation](https://polkit.pages.freedesktop.org/polkit/polkit.8.html) also warns against using `*_KEEP` for rules that depend on variables.
 
 2. **Governor D-Bus write permission — Medium**
-   `vendor/templates/com.cyanskillfish.Governor.conf` allows default local users to call the governor's write interface. Another process running on the same device can therefore call the upstream governor API without passing through the GUI's 500–1800 MHz and temperature validation. The risk is lower on a single-user device, but the GUI limits are not a system-wide security boundary. Before public distribution, restrict write access through a dedicated user group or a separately authorized helper.
+   `vendor/templates/com.cyanskillfish.Governor.conf` allows default local users to call the governor's write interface. Another process running on the same device can therefore call the upstream governor API without passing through the GUI's unsigned-integer and bound-order validation. The risk is lower on a single-user device, but GUI validation is not a system-wide security boundary. Before public distribution, restrict write access through a dedicated user group or a separately authorized helper.
 
 3. **Optional UMR source installation — Medium, conditional**
    The manual `install-umr` function in the bundled `bc250-cu-live-manager` can clone a remote default branch that is not pinned to an immutable commit or release hash, then build and install it as root. The GUI's `Install components` button does not use this path; it installs the verified bundled UMR binary. The manual function should nevertheless be removed from a public package or pinned to an immutable version with a verified hash.
 
 Evidence confirmed during the current review:
 
-- All 15 installation files listed in `VENDOR-MANIFEST.json` matched their recorded SHA-256 hashes.
-- The bundled Governor executable and license matched the files in the official [v0.4.11 release](https://github.com/filippor/cyan-skillfish-governor/releases/tag/v0.4.11) archive.
+- All 16 bundled files listed in `VENDOR-MANIFEST.json` matched their recorded SHA-256 hashes.
+- The bundled Governor was rebuilt from official v0.4.11 commit `60ab6e5b354f01f287c73d920990dcd618a674cc`; its complete source delta is stored in `vendor/patches/`, and all 31 Rust tests passed in the isolated build.
 - The GNU build ID of the bundled UMR executable matched the [Fedora 43 `1.0.10-6.fc43` package record](https://packages.fedoraproject.org/pkgs/umr/umr/fedora-43.html).
 - Microsoft Defender found no threats in the project files during the 2026-08-02 scan.
 - No private key, API token, or external network listener was found in the source.
-- Of 124 unit tests, 122 passed and one was skipped. The remaining test failed because GTK/PyGObject was unavailable in the Windows verification environment; the Bazzite target check must still be performed separately.
+- All 136 unit tests passed on the target BC-250 Bazzite system, including the GTK4 environment check and the 14-file installation reproduction.
 
 These results do not prove that the bundled binaries are absolutely safe. The executables have not received a complete source audit, while antivirus scanning and hash matching confirm only known-threat detection and file identity respectively. Public releases should use signed tags, signed checksums, or distribution package signatures.
 
@@ -225,7 +226,7 @@ app.py                    GTK4 application entry point
 bc250/                    Status, environment detection, control, and GUI modules
 bc250_install.py          Verified bundle installer and removal helper
 bc250_privileged.py       Restricted persistent-setting helper
-vendor/                   Pinned binaries, service templates, and licenses
+vendor/                   Pinned binaries, source patch, service templates, and licenses
 VENDOR-MANIFEST.json      Installation file hashes and provenance
 screenshot.png            Actual Bazzite GNOME application screenshot
 README.ko.md              Korean documentation
@@ -240,6 +241,7 @@ tests/                    unittest and execution validation
 The following backups are created before persistent settings are changed:
 
 - `/etc/cyan-skillfish-governor-smu/config.toml.bc250-backup`
+- `/etc/cyan-skillfish-governor-smu/config.toml.bc250-pre-range-update`
 - `/etc/bc250-cu-live-manager.conf.bc250-backup`
 
 To remove only the GNOME app-grid registration, run:
@@ -295,4 +297,4 @@ Privileged-helper tests use a temporary root directory and do not modify the rea
 
 ## Warning
 
-Enabling BC-250 CUs or changing clocks and voltage can cause system freezes, loss of display output, data corruption, and increased heat. Use a stable power supply and active cooling, and save important work before changing settings. The application restricts dangerous values and creates backups, but it cannot guarantee the stability of every individual board.
+Enabling BC-250 CUs or changing clocks and voltage can cause system freezes, loss of display output, data corruption, and increased heat. Use a stable power supply and active cooling, and save important work before changing settings. The application forwards user-selected values and creates backups for persistent configuration changes, but it cannot guarantee that a value is supported or stable on every individual board.

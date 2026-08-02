@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -11,6 +12,30 @@ from pathlib import Path
 
 from bc250.bootstrap import detect_platform, load_manifest, verify_bundle
 from bc250_privileged import run_action
+
+
+EXTENDED_SAFE_POINTS = (
+    (350, 700),
+    (500, 700),
+    (1000, 800),
+    (1175, 850),
+    (1500, 900),
+    (1600, 910),
+    (1700, 920),
+    (1800, 930),
+    (1850, 930),
+    (2000, 960),
+    (2050, 980),
+    (2100, 1000),
+    (2125, 1020),
+    (2150, 1035),
+    (2200, 1050),
+    (2230, 1085),
+    (2300, 1110),
+    (2350, 1130),
+    (2400, 1150),
+)
+LEGACY_SAFE_POINT_FREQUENCIES = {500, 1000, 1175, 1500, 1600, 1700, 1800}
 
 
 def _result(ok: bool, message_id: str, message: str, message_args: dict | None = None, **extra) -> dict:
@@ -42,6 +67,60 @@ def _copy_atomic(source: Path, destination: Path, mode: int) -> None:
             os.unlink(temp_name)
 
 
+def extend_governor_curve(text: str) -> tuple[str, bool]:
+    pairs = [
+        (int(frequency), int(voltage))
+        for frequency, voltage in re.findall(
+            r"\[\[safe-points\]\]\s*\r?\n\s*frequency\s*=\s*(\d+)[^\r\n]*\r?\n\s*voltage\s*=\s*(\d+)",
+            text,
+        )
+    ]
+    known = dict(EXTENDED_SAFE_POINTS)
+    frequencies = {frequency for frequency, _voltage in pairs}
+    if not LEGACY_SAFE_POINT_FREQUENCIES.issubset(frequencies):
+        return text, False
+    if any(frequency not in known or known[frequency] != voltage for frequency, voltage in pairs):
+        return text, False
+
+    missing = [
+        (frequency, voltage)
+        for frequency, voltage in EXTENDED_SAFE_POINTS
+        if frequency not in frequencies
+    ]
+    if not missing:
+        return text, False
+    blocks = "\n\n".join(
+        f"[[safe-points]]\nfrequency = {frequency}\nvoltage = {voltage}"
+        for frequency, voltage in missing
+    )
+    return f"{text.rstrip()}\n\n{blocks}\n", True
+
+
+def _migrate_governor_curve(path: Path) -> bool:
+    try:
+        original = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    updated, changed = extend_governor_curve(original)
+    if not changed:
+        return False
+
+    backup = path.with_suffix(path.suffix + ".bc250-pre-range-update")
+    shutil.copy2(path, backup)
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as stream:
+            stream.write(updated)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temp_name, path.stat().st_mode & 0o777)
+        os.replace(temp_name, path)
+    finally:
+        if os.path.exists(temp_name):
+            os.unlink(temp_name)
+    return True
+
+
 def service_commands() -> list[list[str]]:
     return [
         ["systemctl", "daemon-reload"],
@@ -54,7 +133,8 @@ def service_commands() -> list[list[str]]:
             "org.freedesktop.DBus",
             "ReloadConfig",
         ],
-        ["systemctl", "enable", "--now", "cyan-skillfish-governor-smu.service"],
+        ["systemctl", "enable", "cyan-skillfish-governor-smu.service"],
+        ["systemctl", "restart", "cyan-skillfish-governor-smu.service"],
         ["systemctl", "enable", "bc250-cu-live-manager.service"],
         ["systemctl", "enable", "--now", "bc250-cpu-mode.service"],
     ]
@@ -89,6 +169,7 @@ def install_bundle(project_root: Path, root: Path = Path("/"), manage_services: 
         details = [str(error.params.get("detail", error.key)) for error in report.errors]
         return _result(False, "error.bundle_invalid", details[0], {"detail": details[0]}, errors=details)
     installed: list[str] = []
+    migrated: list[str] = []
     try:
         manifest = load_manifest(project_root)
         for component in manifest["components"]:
@@ -102,12 +183,21 @@ def install_bundle(project_root: Path, root: Path = Path("/"), manage_services: 
             mode = int(str(component.get("mode", "0644")), 8)
             _copy_atomic(source, destination, mode)
             installed.append(str(destination))
+        governor_config = _rooted(root, "/etc/cyan-skillfish-governor-smu/config.toml")
+        if _migrate_governor_curve(governor_config):
+            migrated.append(str(governor_config))
         if manage_services and root == Path("/"):
             for command in service_commands():
                 result = subprocess.run(command, text=True, capture_output=True, timeout=30, check=False)
                 if result.returncode != 0:
                     return _result(False, "install.service_failed", result.stderr.strip() or "서비스 설정 실패", installed=installed)
-        return _result(True, "install.complete", "번들 구성요소 설치 완료", installed=installed)
+        return _result(
+            True,
+            "install.complete",
+            "번들 구성요소 설치 완료",
+            installed=installed,
+            migrated=migrated,
+        )
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
         return _result(False, "dialog.operation_failed", str(exc), installed=installed)
 

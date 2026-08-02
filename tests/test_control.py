@@ -6,7 +6,7 @@ from bc250.control import CommandResult, GovernorController, PrivilegedRunner
 
 
 class ControlTests(unittest.TestCase):
-    def test_cpu_unlock_uses_only_installed_privileged_helper_action(self):
+    def test_cpu_unlock_uses_project_privileged_helper_action(self):
         calls = []
 
         def runner(argv):
@@ -21,6 +21,7 @@ class ControlTests(unittest.TestCase):
             return CommandResult(True, json.dumps(payload), "", 0)
 
         privileged = PrivilegedRunner(Path("."), runner=runner)
+        helper = str(privileged.project_root / "bc250_privileged.py")
         self.assertTrue(hasattr(privileged, "unlock_cpu"), "unlock_cpu is missing")
         command, payload = privileged.unlock_cpu()
 
@@ -28,7 +29,7 @@ class ControlTests(unittest.TestCase):
         self.assertTrue(payload["reboot_required"])
         self.assertEqual(
             calls,
-            [["pkexec", "/usr/local/libexec/bc250-custom-pannel-privileged", "unlock-cpu"]],
+            [["pkexec", "python3", helper, "unlock-cpu"]],
         )
 
     def test_cpu_mode_toggle_uses_validated_on_or_off_helper_argument(self):
@@ -41,6 +42,7 @@ class ControlTests(unittest.TestCase):
                 return CommandResult(True, json.dumps(payload), "", 0)
 
             privileged = PrivilegedRunner(Path("."), runner=runner)
+            helper = str(privileged.project_root / "bc250_privileged.py")
             self.assertTrue(hasattr(privileged, "set_cpu_mode"), "set_cpu_mode is missing")
 
             command, payload = privileged.set_cpu_mode(enabled)
@@ -52,7 +54,8 @@ class ControlTests(unittest.TestCase):
                     calls,
                     [[
                         "pkexec",
-                        "/usr/local/libexec/bc250-custom-pannel-privileged",
+                        "python3",
+                        helper,
                         "set-cpu-mode",
                         "--enabled",
                         value,
@@ -95,7 +98,7 @@ class ControlTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertEqual(len(calls), 1)
 
-    def test_runtime_apply_uses_validated_dbus_calls(self):
+    def test_runtime_apply_uses_one_atomic_tuning_call(self):
         calls = []
 
         def runner(argv):
@@ -104,8 +107,9 @@ class ControlTests(unittest.TestCase):
 
         result = GovernorController(runner=runner).apply_runtime("eco", 85, 75)
         self.assertTrue(result.ok)
-        self.assertEqual(calls[0][-3:], ["uu", "500", "1500"])
-        self.assertEqual(calls[1][-3:], ["uu", "85", "75"])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][-5:], ["uuuu", "500", "1500", "85", "75"])
+        self.assertEqual(calls[0][-6], "SetTuning")
 
     def test_custom_runtime_apply_uses_user_frequency_range(self):
         calls = []
@@ -116,11 +120,12 @@ class ControlTests(unittest.TestCase):
 
         controller = GovernorController(runner=runner)
         self.assertTrue(hasattr(controller, "apply_custom"), "apply_custom is missing")
-        result = controller.apply_custom(600, 1750, 85, 75)
+        result = controller.apply_custom(0, 4_294_967_295, 255, 255)
 
         self.assertTrue(result.ok)
-        self.assertEqual(calls[0][-3:], ["uu", "600", "1750"])
-        self.assertEqual(calls[1][-3:], ["uu", "85", "75"])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][-5:], ["uuuu", "0", "4294967295", "255", "255"])
+        self.assertEqual(calls[0][-6], "SetTuning")
 
     def test_custom_persistent_settings_use_narrow_helper_arguments(self):
         calls = []
@@ -131,26 +136,50 @@ class ControlTests(unittest.TestCase):
             return CommandResult(True, json.dumps(payload), "", 0)
 
         privileged = PrivilegedRunner(Path("."), runner=runner)
+        helper = str(privileged.project_root / "bc250_privileged.py")
         self.assertTrue(hasattr(privileged, "save_custom_settings"), "save_custom_settings is missing")
-        privileged.save_custom_settings(600, 1750, 85, 75)
+        privileged.save_custom_settings(0, 4_294_967_295, 255, 255)
 
         self.assertEqual(
             calls[0],
             [
-                "pkexec", "/usr/local/libexec/bc250-custom-pannel-privileged",
-                "save-governor-custom", "--min-mhz", "600", "--max-mhz", "1750",
-                "--throttle", "85", "--recovery", "75",
+                "pkexec", "python3", helper,
+                "save-governor-custom", "--min-mhz", "0", "--max-mhz", "4294967295",
+                "--throttle", "255", "--recovery", "255",
             ],
         )
+
+    def test_preset_and_cu_saves_use_project_privileged_helper(self):
+        calls = []
+
+        def runner(argv):
+            calls.append(argv)
+            payload = {"ok": True, "message_id": "helper.action", "message_args": {}, "message": "ok"}
+            return CommandResult(True, json.dumps(payload), "", 0)
+
+        privileged = PrivilegedRunner(Path("."), runner=runner)
+        helper = str(privileged.project_root / "bc250_privileged.py")
+        privileged.save_settings("balanced", 85, 75)
+        privileged.save_cu(40)
+
+        self.assertEqual(calls[0][:4], ["pkexec", "python3", helper, "save-governor"])
+        self.assertEqual(calls[1], ["pkexec", "python3", helper, "save-cu", "--cu", "40"])
 
     def test_invalid_temperature_executes_no_command(self):
         calls = []
         controller = GovernorController(runner=lambda argv: calls.append(argv))
         with self.assertRaises(ValueError):
-            controller.apply_runtime("performance", 95, 75)
+            controller.apply_runtime("performance", 256, 75)
         self.assertEqual(calls, [])
 
-    def test_first_dbus_failure_stops_second_call(self):
+    def test_reversed_closed_frequency_range_executes_no_command(self):
+        calls = []
+        controller = GovernorController(runner=lambda argv: calls.append(argv))
+        with self.assertRaises(ValueError):
+            controller.apply_custom(1_800, 1_700, 85, 75)
+        self.assertEqual(calls, [])
+
+    def test_atomic_dbus_failure_does_not_issue_a_followup_call(self):
         calls = []
 
         def runner(argv):
