@@ -1,0 +1,13 @@
+[Unit]
+Description=BC-250 requested CPU core mode
+After=local-fs.target
+Before=cyan-skillfish-governor-smu.service
+ConditionPathExists=/usr/local/libexec/bc250-custom-pannel-privileged
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/bc250-custom-pannel-privileged apply-cpu-mode
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

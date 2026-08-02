@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.log
+.coverage
+.pytest_cache/
+.agent/
+.codex/
+.superpowers/
+sdd/
+docs/superpowers/
+.env
+.env.*
+*.pem
+*.key

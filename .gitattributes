@@ -1,0 +1,5 @@
+* text=auto eol=lf
+*.sh text eol=lf
+vendor/bin/* binary
+*.png binary
+*.gz binary

@@ -1,0 +1,17 @@
+[Unit]
+Description=Cyan Skillfish GPU Governor for BC-250
+After=multi-user.target
+Conflicts=cyan-skillfish-governor.service cyan-skillfish-governor-tt.service oberon-governor.service
+
+[Service]
+Type=simple
+ExecStart=/etc/cyan-skillfish-governor-smu/cyan-skillfish-governor-smu /etc/cyan-skillfish-governor-smu/config.toml
+Restart=on-failure
+RestartSec=5s
+ManagedOOMPreference=avoid
+OOMScoreAdjust=-1000
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

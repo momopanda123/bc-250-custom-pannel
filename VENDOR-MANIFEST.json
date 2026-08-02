@@ -1,0 +1,177 @@
+{
+  "schema": 1,
+  "project": "bc-250-custom-pannel",
+  "target": "AMD BC-250 / Bazzite x86_64",
+  "generated": "2026-08-02",
+  "components": [
+    {
+      "name": "cyan-skillfish-governor-smu release archive",
+      "path": "vendor/cyan-skillfish-governor-smu-v0.4.11-x86_64-linux.tar.gz",
+      "version": "0.4.11",
+      "source": "https://github.com/filippor/cyan-skillfish-governor/releases/download/v0.4.11/cyan-skillfish-governor-smu-v0.4.11-x86_64-linux.tar.gz",
+      "sha256": "b083650afe6643540f454d6897f5baf32c82a00bb510c05bff0aacaf1768e4e2",
+      "license": "MIT",
+      "target": "reference archive"
+    },
+    {
+      "name": "cyan-skillfish-governor-smu",
+      "path": "vendor/bin/cyan-skillfish-governor-smu",
+      "version": "0.4.11",
+      "source": "https://github.com/filippor/cyan-skillfish-governor/releases/tag/v0.4.11",
+      "sha256": "72438b788678f5a0ac194036f15651bf1c180f63d4b8daf1c303992d115abf05",
+      "license": "MIT",
+      "target": "Bazzite x86_64",
+      "install_path": "/etc/cyan-skillfish-governor-smu/cyan-skillfish-governor-smu",
+      "mode": "0755"
+    },
+    {
+      "name": "bc250-cu-live-manager",
+      "path": "vendor/bin/bc250-cu-live-manager",
+      "version": "2026-08-02-verified",
+      "source": "project:bc250-cu-live-manager",
+      "sha256": "304d0b51838ec4ffc80c56894c4867a04523bf1ba27e51f662cbfc79616e442d",
+      "license": "project component",
+      "target": "AMD BC-250",
+      "install_path": "/usr/local/bin/bc250-cu-live-manager",
+      "mode": "0755"
+    },
+    {
+      "name": "UMR",
+      "path": "vendor/bin/umr",
+      "version": "1.0.10-6.fc43",
+      "source": "https://packages.fedoraproject.org/pkgs/umr/umr/",
+      "sha256": "a6473d309118c5bec185e526431c79bcbf044a1a360f4fe9d10c1b20bfc044a0",
+      "license": "MIT",
+      "target": "Bazzite 43 x86_64",
+      "install_path": "/opt/bc250-custom-pannel/bin/umr",
+      "mode": "0755"
+    },
+    {
+      "name": "governor default config",
+      "path": "vendor/templates/governor-config.toml",
+      "version": "1800-930-safe",
+      "source": "project template based on upstream v0.4.11",
+      "sha256": "0353bdf509b5fcec0615edf6cc0397225a0bc2bd20b183492f90ee3ce9965f9f",
+      "license": "project configuration",
+      "target": "Bazzite",
+      "install_path": "/etc/cyan-skillfish-governor-smu/config.toml",
+      "mode": "0644",
+      "preserve_existing": true,
+      "preserve_on_remove": true
+    },
+    {
+      "name": "CU default boot profile",
+      "path": "vendor/templates/bc250-cu-live-manager.conf",
+      "version": "stock-24cu",
+      "source": "project template",
+      "sha256": "6a045a4a8356a7784bc095d7bbf37631990005e5d41b50e137733566472a9bb9",
+      "license": "project configuration",
+      "target": "AMD BC-250",
+      "install_path": "/etc/bc250-cu-live-manager.conf",
+      "mode": "0644",
+      "preserve_existing": true,
+      "preserve_on_remove": true
+    },
+    {
+      "name": "CPU mode preference",
+      "path": "vendor/templates/bc250-cpu-mode.conf",
+      "version": "1",
+      "source": "project template",
+      "sha256": "a61b66dee66b3e4c60a1fab0664ce622d1026dd9f2ac5872502828d0f1e92229",
+      "license": "project configuration",
+      "target": "AMD BC-250",
+      "install_path": "/etc/bc250-custom-pannel-cpu.conf",
+      "mode": "0644",
+      "preserve_existing": true,
+      "preserve_on_remove": true
+    },
+    {
+      "name": "governor systemd service",
+      "path": "vendor/templates/cyan-skillfish-governor-smu.service",
+      "version": "1",
+      "source": "project template",
+      "sha256": "e2aa04a7addaf86cc56bb0f9e4b0ccab451008cc98a4fbc26a221885dc1e40d5",
+      "license": "project configuration",
+      "target": "Bazzite",
+      "install_path": "/etc/systemd/system/cyan-skillfish-governor-smu.service",
+      "mode": "0644"
+    },
+    {
+      "name": "CU manager systemd service",
+      "path": "vendor/templates/bc250-cu-live-manager.service",
+      "version": "1",
+      "source": "project template",
+      "sha256": "70cc6c3f371f0e7b95c3937a44b61ce6fe9f1eb933cd5091edd3a6fe3f8e8543",
+      "license": "project configuration",
+      "target": "AMD BC-250",
+      "install_path": "/etc/systemd/system/bc250-cu-live-manager.service",
+      "mode": "0644"
+    },
+    {
+      "name": "CPU mode systemd service",
+      "path": "vendor/templates/bc250-cpu-mode.service",
+      "version": "1",
+      "source": "project template",
+      "sha256": "c72d854b9c4e8577d48ddbfbf30ab31451d5566906229521e359fba21ab29802",
+      "license": "project configuration",
+      "target": "AMD BC-250",
+      "install_path": "/etc/systemd/system/bc250-cpu-mode.service",
+      "mode": "0644"
+    },
+    {
+      "name": "governor D-Bus policy",
+      "path": "vendor/templates/com.cyanskillfish.Governor.conf",
+      "version": "1",
+      "source": "upstream v0.4.11 policy with root-only test mode",
+      "sha256": "ddf446e4d5fd282d432c5445cb891855aef4568a2d4591fce0393a082aaa6da8",
+      "license": "MIT",
+      "target": "Bazzite",
+      "install_path": "/etc/dbus-1/system.d/com.cyanskillfish.Governor.conf",
+      "mode": "0644"
+    },
+    {
+      "name": "custom pannel polkit rule",
+      "path": "vendor/templates/49-bc250-custom-pannel.rules",
+      "version": "1",
+      "source": "project rule",
+      "sha256": "57542af2a3812fff15bec782a6858adfbd6ff8b89a838a7ff3fe2646b27b8335",
+      "license": "project configuration",
+      "target": "Bazzite",
+      "install_path": "/etc/polkit-1/rules.d/49-bc250-custom-pannel.rules",
+      "mode": "0644"
+    },
+    {
+      "name": "custom pannel privileged helper",
+      "path": "bc250_privileged.py",
+      "version": "0.2.0",
+      "source": "project source",
+      "sha256": "0c892561e9bb6b73e857f3f40a32c72f87a5a2452f8dd82a509bec8e1bc329c4",
+      "license": "project component",
+      "target": "Bazzite",
+      "install_path": "/usr/local/libexec/bc250-custom-pannel-privileged",
+      "mode": "0755"
+    },
+    {
+      "name": "cyan-skillfish-governor license",
+      "path": "vendor/licenses/cyan-skillfish-governor-MIT.txt",
+      "version": "v0.4.11",
+      "source": "https://github.com/filippor/cyan-skillfish-governor",
+      "sha256": "7fd1dea6495612cf349621799fff8359a6497bd97378c6fe9d87a9f73bd446d0",
+      "license": "MIT",
+      "target": "license notice",
+      "install_path": "/opt/bc250-custom-pannel/licenses/cyan-skillfish-governor-MIT.txt",
+      "mode": "0644"
+    },
+    {
+      "name": "UMR license",
+      "path": "vendor/licenses/umr-MIT.txt",
+      "version": "1.0.10",
+      "source": "https://gitlab.freedesktop.org/drm/amd/umr",
+      "sha256": "98b183a039bdf9f8c534d014e4b4fdd667373267b56808425e482cd2ac390d0a",
+      "license": "MIT",
+      "target": "license notice",
+      "install_path": "/opt/bc250-custom-pannel/licenses/umr-MIT.txt",
+      "mode": "0644"
+    }
+  ]
+}

@@ -1,0 +1,383 @@
+@define-color app_bg #090C10;
+@define-color surface #111820;
+@define-color surface_raised #17212B;
+@define-color border #263341;
+@define-color text_main #F2F7FA;
+@define-color text_muted #8FA0AE;
+@define-color cyan #52D3FF;
+@define-color violet #9B8CFF;
+@define-color mint #62E6A7;
+@define-color amber #FFB454;
+@define-color error #FF7185;
+@define-color blue #5EA8FF;
+@define-color pink #FF78C6;
+@define-color lime #8BE28B;
+
+window {
+  background-color: @app_bg;
+  color: @text_main;
+}
+
+.app-header {
+  background-color: #0D1218;
+  border-bottom: 1px solid @border;
+  min-height: 30px;
+  padding: 0 4px;
+}
+
+.app-header windowcontrols {
+  margin: 0;
+  padding: 0;
+}
+
+.app-header windowcontrols button {
+  margin: 0;
+  padding: 0;
+  min-width: 24px;
+  min-height: 24px;
+}
+
+.app-title {
+  color: @text_main;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.last-update,
+.metric-detail,
+.setup-detail,
+.core-state,
+.inline-status {
+  color: @text_muted;
+}
+
+.last-update {
+  font-size: 9px;
+}
+
+.language-selector {
+  background: transparent;
+  background-image: none;
+  border: none;
+  box-shadow: none;
+  min-height: 22px;
+  padding: 0;
+}
+
+.language-selector button {
+  color: #FFFFFF;
+  background: transparent;
+  background-image: none;
+  border: none;
+  box-shadow: none;
+  min-height: 22px;
+  padding: 0 4px;
+}
+
+.dashboard {
+  background-color: @app_bg;
+}
+
+.overview-strip {
+  background-image: linear-gradient(90deg, alpha(@pink, 0.14), alpha(@surface, 0.96));
+  border-left: 3px solid @pink;
+  border-radius: 8px;
+  padding: 5px 9px;
+}
+
+.hero-title {
+  color: @text_main;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.hero-state {
+  color: @pink;
+  font-size: 11px;
+  font-weight: 700;
+  background-color: alpha(@pink, 0.09);
+  border: 1px solid alpha(@pink, 0.30);
+  border-radius: 99px;
+  padding: 3px 8px;
+}
+
+.status-badge {
+  border-radius: 99px;
+  padding: 2px 6px;
+  font-size: 9px;
+  font-weight: 750;
+  margin-right: 3px;
+}
+
+.status-good {
+  color: @mint;
+  background-color: alpha(@mint, 0.10);
+  border: 1px solid alpha(@mint, 0.34);
+}
+
+.status-warn {
+  color: @amber;
+  background-color: alpha(@amber, 0.10);
+  border: 1px solid alpha(@amber, 0.34);
+}
+
+.status-error {
+  color: @error;
+  background-color: alpha(@error, 0.10);
+  border: 1px solid alpha(@error, 0.34);
+}
+
+.setup-banner {
+  background-color: alpha(@amber, 0.08);
+  border: 1px solid alpha(@amber, 0.30);
+  border-radius: 8px;
+  padding: 3px 7px;
+}
+
+.setup-title {
+  color: @amber;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.setup-detail {
+  font-size: 10px;
+}
+
+.eyebrow {
+  color: @cyan;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.telemetry-band {
+  background-color: @surface;
+  border: 1px solid @border;
+  border-radius: 10px;
+}
+
+.telemetry-cell {
+  padding: 5px 8px;
+  background-color: @surface;
+}
+
+.metric-cpu {
+  background-image: linear-gradient(135deg, alpha(@blue, 0.15), alpha(@surface, 0.96));
+  border-top: 2px solid alpha(@blue, 0.72);
+}
+
+.metric-gpu {
+  background-image: linear-gradient(135deg, alpha(@violet, 0.16), alpha(@surface, 0.96));
+  border-top: 2px solid alpha(@violet, 0.72);
+}
+
+.metric-power {
+  background-image: linear-gradient(135deg, alpha(@amber, 0.15), alpha(@surface, 0.96));
+  border-top: 2px solid alpha(@amber, 0.72);
+}
+
+.metric-clock {
+  background-image: linear-gradient(135deg, alpha(@mint, 0.14), alpha(@surface, 0.96));
+}
+
+.metric-voltage {
+  background-image: linear-gradient(135deg, alpha(@pink, 0.14), alpha(@surface, 0.96));
+}
+
+.metric-fan {
+  background-image: linear-gradient(135deg, alpha(@cyan, 0.13), alpha(@surface, 0.96));
+}
+
+.divider-right {
+  border-right: 1px solid @border;
+}
+
+.divider-bottom {
+  border-bottom: 1px solid @border;
+}
+
+.metric-title,
+.field-label {
+  color: @text_muted;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.metric-value {
+  color: @text_main;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.tuning-surface {
+  background-image: linear-gradient(135deg, @surface, alpha(@violet, 0.10));
+  border: 1px solid @border;
+  border-top: 2px solid alpha(@violet, 0.65);
+  border-radius: 11px;
+  padding: 7px 9px;
+}
+
+.core-surface {
+  background-image: linear-gradient(135deg, @surface, alpha(@blue, 0.09));
+  border: 1px solid @border;
+  border-top: 2px solid alpha(@blue, 0.65);
+  border-radius: 11px;
+  padding: 6px 8px 7px;
+}
+
+.power-surface {
+  background-image: linear-gradient(110deg, alpha(@mint, 0.13), alpha(@surface, 0.98));
+  border: 1px solid alpha(@mint, 0.35);
+  border-left: 3px solid @mint;
+  border-radius: 9px;
+  padding: 5px 8px;
+}
+
+.power-idle-value {
+  color: @mint;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.section-title {
+  color: @text_main;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.inline-status {
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.core-pane {
+  padding: 2px 10px 0;
+}
+
+.core-value {
+  color: @text_main;
+  font-size: 18px;
+  font-weight: 850;
+}
+
+.core-state {
+  font-size: 10px;
+  min-height: 14px;
+}
+
+.system-strip {
+  background-image: linear-gradient(90deg, alpha(@surface_raised, 0.88), alpha(@surface, 0.78));
+  border: 1px solid alpha(@border, 0.85);
+  border-radius: 8px;
+}
+
+.system-cell {
+  padding: 4px 9px;
+}
+
+.system-cell:first-child,
+.system-cell:last-child {
+  min-width: 260px;
+}
+
+.system-value {
+  color: @text_main;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+button,
+dropdown,
+spinbutton {
+  color: #FFFFFF;
+  border-radius: 7px;
+  min-height: 24px;
+  font-size: 11px;
+}
+
+dropdown,
+spinbutton {
+  background-color: @surface_raised;
+  border: 1px solid @border;
+  color: @text_main;
+}
+
+.setup-banner button {
+  color: #FFFFFF;
+  background-color: alpha(@amber, 0.26);
+  border: 1px solid @amber;
+  font-weight: 800;
+}
+
+.tuning-surface button {
+  color: #FFFFFF;
+  background-color: alpha(@violet, 0.30);
+  border: 1px solid alpha(@violet, 0.72);
+  font-weight: 750;
+}
+
+.core-surface button {
+  color: #FFFFFF;
+  background-color: alpha(@blue, 0.27);
+  border: 1px solid alpha(@blue, 0.82);
+  font-weight: 800;
+}
+
+.power-surface button {
+  color: #FFFFFF;
+  background-color: alpha(@mint, 0.24);
+  border: 1px solid @mint;
+  font-weight: 800;
+}
+
+.core-surface button:checked,
+.power-surface button:checked {
+  box-shadow: inset 0 0 0 2px alpha(#FFFFFF, 0.32);
+}
+
+.primary-action {
+  color: #FFFFFF;
+  background-color: alpha(@cyan, 0.28);
+  border: 1px solid @cyan;
+  font-weight: 800;
+}
+
+.primary-action:hover {
+  background-color: alpha(@cyan, 0.40);
+}
+
+.secondary-action {
+  color: #FFFFFF;
+  background-color: alpha(@violet, 0.28);
+  border: 1px solid alpha(@violet, 0.68);
+  font-weight: 750;
+}
+
+.warning-action {
+  color: #FFFFFF;
+  background-color: alpha(@amber, 0.20);
+  border: 1px solid alpha(@amber, 0.38);
+  font-weight: 700;
+}
+
+.cpu-action {
+  color: #FFFFFF;
+  background-color: alpha(@blue, 0.20);
+  border: 1px solid alpha(@blue, 0.54);
+  font-weight: 750;
+}
+
+.primary-action:focus,
+.secondary-action:focus,
+.warning-action:focus,
+.cpu-action:focus {
+  outline-color: @cyan;
+  outline-width: 2px;
+}
+
+button:disabled,
+dropdown:disabled,
+spinbutton:disabled {
+  opacity: 0.64;
+}

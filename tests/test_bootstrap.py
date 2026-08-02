@@ -1,0 +1,117 @@
+import hashlib
+import json
+import tempfile
+import unittest
+from dataclasses import fields
+from pathlib import Path
+
+from bc250.bootstrap import BootstrapReport, BundleReport, PlatformReport, detect_platform, inspect, load_manifest, verify_bundle
+from bc250.messages import UserMessage
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+class BootstrapTests(unittest.TestCase):
+    def _fixture(self, payload: bytes, digest: str) -> Path:
+        root = Path(self.tmp.name)
+        vendor = root / "vendor"
+        vendor.mkdir(parents=True, exist_ok=True)
+        (vendor / "component.bin").write_bytes(payload)
+        (root / "VENDOR-MANIFEST.json").write_text(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "components": [
+                        {
+                            "name": "fixture",
+                            "path": "vendor/component.bin",
+                            "version": "1",
+                            "source": "https://example.invalid/component",
+                            "sha256": digest,
+                            "license": "MIT",
+                            "target": "test",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return root
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_valid_bundle_is_accepted(self):
+        payload = b"verified component"
+        root = self._fixture(payload, hashlib.sha256(payload).hexdigest())
+        self.assertTrue(verify_bundle(root).ok)
+
+    def test_production_bundle_manifest_matches_real_project_files(self):
+        report = verify_bundle(PROJECT_ROOT)
+        self.assertTrue(report.ok, report.errors)
+
+    def test_production_bundle_installs_persistent_cpu_mode_config_and_service(self):
+        components = load_manifest(PROJECT_ROOT)["components"]
+        by_install_path = {component.get("install_path"): component for component in components}
+        self.assertIn("/etc/bc250-custom-pannel-cpu.conf", by_install_path)
+        self.assertIn("/etc/systemd/system/bc250-cpu-mode.service", by_install_path)
+        service = PROJECT_ROOT / by_install_path["/etc/systemd/system/bc250-cpu-mode.service"]["path"]
+        config = PROJECT_ROOT / by_install_path["/etc/bc250-custom-pannel-cpu.conf"]["path"]
+        self.assertIn(
+            "ExecStart=/usr/local/libexec/bc250-custom-pannel-privileged apply-cpu-mode",
+            service.read_text(encoding="utf-8"),
+        )
+        self.assertEqual(config.read_text(encoding="utf-8"), "CPU_EXTRA_CORES=auto\n")
+
+    def test_modified_vendor_file_is_rejected(self):
+        root = self._fixture(b"changed", "0" * 64)
+        report = verify_bundle(root)
+        self.assertFalse(report.ok)
+        self.assertEqual(report.errors[0].key, "error.bundle_invalid")
+        self.assertIn("SHA-256", str(report.errors[0].params["detail"]))
+
+    def test_only_bazzite_x86_64_bc250_is_supported(self):
+        good = detect_platform(
+            os_release="ID=fedora\nVARIANT_ID=bazzite\n",
+            arch="x86_64",
+            pci_devices="1002:13fe",
+        )
+        self.assertTrue(good.supported)
+        self.assertEqual(good.message.key, "platform.ready")
+        not_bazzite = detect_platform("ID=fedora\nVARIANT_ID=workstation\n", "x86_64", "1002:13fe")
+        wrong_arch = detect_platform("ID=fedora\nVARIANT_ID=bazzite\n", "aarch64", "1002:13fe")
+        missing_gpu = detect_platform("ID=fedora\nVARIANT_ID=bazzite\n", "x86_64", "1002:9999")
+        self.assertEqual(not_bazzite.message.key, "platform.not_bazzite")
+        self.assertEqual(wrong_arch.message.key, "platform.arch_unsupported")
+        self.assertEqual(wrong_arch.message.params, {"architecture": "aarch64"})
+        self.assertEqual(missing_gpu.message.key, "platform.device_missing")
+
+    def test_skip_platform_has_stable_message_key(self):
+        report = inspect(Path("."), skip_platform=True)
+        self.assertEqual(report.platform.message.key, "platform.skipped")
+        self.assertEqual(report.platform.message.params, {})
+
+    def test_ready_requires_the_persistent_cpu_mode_component(self):
+        self.assertIn("cpu_mode_installed", {field.name for field in fields(BootstrapReport)})
+        report = BootstrapReport(
+            bundle=BundleReport(True, (), ()),
+            platform=PlatformReport(True, True, "x86_64", True, UserMessage("platform.ready")),
+            governor_installed=True,
+            cu_manager_installed=True,
+            umr_installed=True,
+            helper_installed=True,
+            cpu_mode_installed=False,
+        )
+        self.assertFalse(report.ready)
+
+    def test_cpu_mode_bundle_default_preserves_the_existing_cpu_state(self):
+        text = Path("vendor/templates/bc250-cpu-mode.conf").read_text(encoding="utf-8")
+        self.assertEqual(text, "CPU_EXTRA_CORES=auto\n")
+
+
+if __name__ == "__main__":
+    unittest.main()
