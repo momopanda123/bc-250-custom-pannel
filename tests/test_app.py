@@ -197,7 +197,7 @@ class AppTests(unittest.TestCase):
         self.assertNotIn("summary.append(self.hero_state)", build)
         self.assertLess(build.index("hardware.append(status)"), build.index("hardware.append(bios)"))
 
-    def test_core_columns_use_content_width_without_gpu_dead_space(self):
+    def test_core_columns_keep_cpu_wide_and_bound_gpu_grid_width(self):
         node = find_window_method("_build_core_surface")
         build = ast.unparse(node)
         core_homogeneous_calls = [
@@ -209,8 +209,13 @@ class AppTests(unittest.TestCase):
             and call.func.value.id == "grid"
         ]
         self.assertEqual(core_homogeneous_calls, [])
+        self.assertIn("cpu.set_size_request(210, -1)", build)
+        self.assertIn("cpu.set_hexpand(True)", build)
+        self.assertIn("gpu.set_size_request(216, -1)", build)
         self.assertIn("gpu.set_hexpand(True)", build)
-        self.assertIn("self.wgp_grid.set_hexpand(True)", build)
+        self.assertIn("self.wgp_grid.set_size_request(216, -1)", build)
+        self.assertIn("self.wgp_grid.set_halign(Gtk.Align.START)", build)
+        self.assertNotIn("self.wgp_grid.set_hexpand(True)", build)
         self.assertIn("self.wgp_grid.set_column_homogeneous(True)", build)
 
     def test_header_is_single_line_without_duplicate_availability_status(self):
