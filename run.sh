@@ -8,4 +8,15 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 1
 fi
 
+if [[ $# -eq 0 && -t 0 && -t 1 ]]; then
+    STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/bc250-custom-pannel"
+    mkdir -p "$STATE_DIR"
+    if command -v setsid >/dev/null 2>&1; then
+        setsid -f python3 "$SCRIPT_DIR/app.py" </dev/null >>"$STATE_DIR/app.log" 2>&1
+    else
+        nohup python3 "$SCRIPT_DIR/app.py" </dev/null >>"$STATE_DIR/app.log" 2>&1 &
+    fi
+    exit 0
+fi
+
 exec python3 "$SCRIPT_DIR/app.py" "$@"

@@ -17,13 +17,15 @@ AMD BC-250에서 Bazzite를 사용할 때 상태 확인과 성능 설정을 한 
 
 ## 설치 및 첫 실행
 
-터미널에서 저장소를 내려받고 실행합니다.
+터미널에서 저장소를 내려받고 앱을 한 번 등록합니다.
 
 ```bash
 git clone https://github.com/momopanda123/bc-250-custom-pannel.git
 cd bc-250-custom-pannel
-./run.sh
+./install-app.sh
 ```
+
+터미널을 닫고 GNOME 앱 목록에서 **BC-250 Control Panel**을 실행합니다. 등록된 바로가기는 `Terminal=false`를 사용하므로 평소 실행할 때는 GUI만 표시됩니다. 프로젝트 폴더를 다른 위치로 옮겼다면 `install-app.sh`를 다시 실행합니다.
 
 필요한 실행 파일과 서비스는 저장소에 포함되어 있으므로 별도로 Governor나 UMR을 찾아서 설치할 필요가 없습니다.
 
@@ -36,16 +38,6 @@ cd bc-250-custom-pannel
 3. 표시가 `Components installed`로 바뀌면 설치가 끝난 것입니다.
 
 필요한 구성요소가 모두 설치된 상태에서는 버튼이 비활성화됩니다. 구성요소 설치만으로 CPU/CU 설정이 변경되지는 않습니다.
-
-### 앱 목록에 등록
-
-GNOME 앱 목록에서 실행하려면 한 번만 다음 명령을 실행합니다.
-
-```bash
-./install-app.sh
-```
-
-이후 앱 목록에서 **BC-250 Control Panel**을 실행할 수 있습니다. 프로젝트 폴더를 다른 위치로 옮겼다면 `install-app.sh`를 다시 실행합니다.
 
 ## 사용 방법
 

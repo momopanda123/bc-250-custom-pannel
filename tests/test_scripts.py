@@ -18,16 +18,22 @@ class ScriptAndReadmeTests(unittest.TestCase):
                 self.assertNotIn("/home/", text)
                 self.assertIn("SCRIPT_DIR", text)
 
-    def test_readmes_cover_operation_and_recovery(self):
+    def test_readmes_cover_installation_and_usage(self):
         documents = {
             "README.md": (
-                "Quick start",
-                "Bundled components",
-                "Safety limits",
-                "Recovery and removal",
-                "Troubleshooting",
+                "Install and run",
+                "Install components",
+                "Using the application",
+                "Apply and Save",
+                "Remove",
             ),
-            "README.ko.md": ("빠른 시작", "동봉 구성요소", "안전 범위", "복구와 제거", "문제 해결"),
+            "README.ko.md": (
+                "설치 및 첫 실행",
+                "구성요소 설치",
+                "사용 방법",
+                "Apply와 Save",
+                "제거",
+            ),
         }
         for path, headings in documents.items():
             text = Path(path).read_text(encoding="utf-8")
@@ -39,6 +45,18 @@ class ScriptAndReadmeTests(unittest.TestCase):
         korean = Path("README.ko.md").read_text(encoding="utf-8")
         self.assertIn("[한국어](README.ko.md)", english)
         self.assertIn("[English](README.md)", korean)
+        for text in (english, korean):
+            self.assertIn("./install-app.sh", text)
+            self.assertNotIn("./run.sh", text)
+
+    def test_interactive_launcher_detaches_without_breaking_cli_mode(self):
+        text = Path("run.sh").read_text(encoding="utf-8")
+        self.assertIn('[[ $# -eq 0 && -t 0 && -t 1 ]]', text)
+        self.assertIn('setsid -f python3 "$SCRIPT_DIR/app.py"', text)
+        self.assertIn('exec python3 "$SCRIPT_DIR/app.py" "$@"', text)
+
+        desktop_installer = Path("install-app.sh").read_text(encoding="utf-8")
+        self.assertIn("Terminal=false", desktop_installer)
 
 
 if __name__ == "__main__":

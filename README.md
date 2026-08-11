@@ -17,13 +17,15 @@ Other GPUs and Linux distributions are not supported installation targets.
 
 ## Install and run
 
-Clone the repository and start the application:
+Clone the repository and register the application once:
 
 ```bash
 git clone https://github.com/momopanda123/bc-250-custom-pannel.git
 cd bc-250-custom-pannel
-./run.sh
+./install-app.sh
 ```
+
+Close the terminal, open the GNOME app grid, and select **BC-250 Control Panel**. The installed launcher uses `Terminal=false`, so normal application launches show only the GUI. Run `install-app.sh` again if you later move the cloned project folder.
 
 The required executables and service files are included in the repository. You do not need to find and install Governor or UMR separately.
 
@@ -36,16 +38,6 @@ If the top row reports that installation or an update is required:
 3. Installation is complete when the row changes to `Components installed`.
 
 The button is disabled when every required component is installed. Installing components alone does not change the selected CPU or CU configuration.
-
-### Add to the app grid
-
-Run this once to add **BC-250 Control Panel** to the GNOME app grid:
-
-```bash
-./install-app.sh
-```
-
-Run `install-app.sh` again if you later move the cloned project folder.
 
 ## Using the application
 
