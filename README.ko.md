@@ -17,15 +17,23 @@ AMD BC-250에서 Bazzite를 사용할 때 상태 확인과 성능 설정을 한 
 
 ## 설치 및 첫 실행
 
-터미널에서 저장소를 내려받고 앱을 한 번 등록합니다.
+저장소를 내려받은 직후 `run.sh`로 패널을 바로 실행할 수 있습니다.
 
 ```bash
 git clone https://github.com/momopanda123/bc-250-custom-pannel.git
 cd bc-250-custom-pannel
+./run.sh
+```
+
+`run.sh`가 기본 실행 파일이며 `install-app.sh`는 필수가 아닙니다. GUI를 열지 않고 Bazzite 환경만 확인하려면 `./run.sh --check`를 사용합니다.
+
+GNOME 앱 목록에 **BC-250 Control Panel** 아이콘을 추가하려면 다음을 한 번만 실행합니다.
+
+```bash
 ./install-app.sh
 ```
 
-터미널을 닫고 GNOME 앱 목록에서 **BC-250 Control Panel**을 실행합니다. 등록된 바로가기는 `Terminal=false`를 사용하므로 평소 실행할 때는 GUI만 표시됩니다. 프로젝트 폴더를 다른 위치로 옮겼다면 `install-app.sh`를 다시 실행합니다.
+그 뒤 터미널을 닫고 앱 목록에서 패널을 실행합니다. 등록된 바로가기는 `Terminal=false`이므로 GUI만 표시됩니다. 이 단계는 현재 사용자 계정에 앱 바로가기만 만드는 것이며 시스템 구성요소 설치나 CPU/GPU 설정 변경을 하지 않습니다. 프로젝트 폴더를 옮겼다면 `install-app.sh`를 다시 실행합니다.
 
 필요한 실행 파일과 서비스는 저장소에 포함되어 있으므로 별도로 Governor나 UMR을 찾아서 설치할 필요가 없습니다.
 

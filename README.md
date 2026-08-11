@@ -17,15 +17,23 @@ Other GPUs and Linux distributions are not supported installation targets.
 
 ## Install and run
 
-Clone the repository and register the application once:
+Clone the repository and start the panel directly:
 
 ```bash
 git clone https://github.com/momopanda123/bc-250-custom-pannel.git
 cd bc-250-custom-pannel
+./run.sh
+```
+
+`run.sh` is the main launcher. It starts the GUI immediately and does not require `install-app.sh`. Use `./run.sh --check` when you only want to validate the Bazzite environment without opening the panel.
+
+To add an optional **BC-250 Control Panel** icon to the GNOME app grid, run this once:
+
+```bash
 ./install-app.sh
 ```
 
-Close the terminal, open the GNOME app grid, and select **BC-250 Control Panel**. The installed launcher uses `Terminal=false`, so normal application launches show only the GUI. Run `install-app.sh` again if you later move the cloned project folder.
+After that, close the terminal and launch the panel from the app grid. The installed launcher uses `Terminal=false`, so it opens only the GUI. This step only creates a per-user desktop entry; it does not install system components or change CPU/GPU settings. Run it again if you move the cloned project folder.
 
 The required executables and service files are included in the repository. You do not need to find and install Governor or UMR separately.
 

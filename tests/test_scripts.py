@@ -46,8 +46,8 @@ class ScriptAndReadmeTests(unittest.TestCase):
         self.assertIn("[한국어](README.ko.md)", english)
         self.assertIn("[English](README.md)", korean)
         for text in (english, korean):
+            self.assertIn("./run.sh", text)
             self.assertIn("./install-app.sh", text)
-            self.assertNotIn("./run.sh", text)
 
     def test_interactive_launcher_detaches_without_breaking_cli_mode(self):
         text = Path("run.sh").read_text(encoding="utf-8")
