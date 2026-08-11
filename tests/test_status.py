@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import json
 from pathlib import Path
 from subprocess import CompletedProcess
 
@@ -234,6 +235,66 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(masks_to_cu_count("0x0f,0x0f,0x0f,0x0f"), 32)
         self.assertEqual(masks_to_cu_count("0x1f,0x1f,0x1f,0x1f"), 40)
         self.assertIsNone(masks_to_cu_count("0xff"))
+
+    def test_collector_prefers_verified_register_readback_over_legacy_journal_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = root / "cu.conf"
+            config.write_text("BC250_WGP_MASKS=0x07,0x0f,0x17,0x1f\n", encoding="utf-8")
+            state = root / "cu-state.json"
+            state.write_text(
+                json.dumps(
+                    {
+                        "verified": True,
+                        "requested_masks": [7, 15, 23, 31],
+                        "actual_masks": [7, 15, 23, 31],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            def runner(argv):
+                stdout = "[ OK ] dispatch registers updated (40/40 CUs target)\n" if argv[0] == "journalctl" else "active\n"
+                return CompletedProcess(argv, 0, stdout, "")
+
+            snapshot = StatusCollector(
+                runner,
+                root / "drm",
+                root / "dmi",
+                config,
+                root / "hwmon",
+                root / "cpu",
+                state,
+            ).collect()
+
+        self.assertEqual(snapshot.cu_masks, (7, 15, 23, 31))
+        self.assertEqual(snapshot.cu_saved_masks, (7, 15, 23, 31))
+        self.assertTrue(snapshot.cu_verified)
+        self.assertEqual(snapshot.cu_count, 32)
+
+    def test_register_readback_mismatch_is_visible_even_when_total_count_matches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = root / "cu.conf"
+            config.write_text("BC250_WGP_MASKS=0x0f,0x0f,0x0f,0x0f\n", encoding="utf-8")
+            state = root / "cu-state.json"
+            state.write_text(
+                json.dumps(
+                    {
+                        "verified": False,
+                        "requested_masks": [15, 15, 15, 15],
+                        "actual_masks": [7, 23, 15, 15],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            runner = lambda argv: CompletedProcess(argv, 0, "active\n", "")
+            snapshot = StatusCollector(
+                runner, root / "drm", root / "dmi", config, root / "hwmon", root / "cpu", state
+            ).collect()
+
+        self.assertFalse(snapshot.cu_verified)
+        self.assertIn(UserMessage("error.cu_mismatch"), snapshot.errors)
 
     def test_bios_and_kernel_are_read_without_root(self):
         with tempfile.TemporaryDirectory() as tmp:

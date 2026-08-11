@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from dataclasses import fields
 from pathlib import Path
+from unittest.mock import patch
 
 from bc250.bootstrap import (
     BootstrapReport,
@@ -12,6 +13,7 @@ from bc250.bootstrap import (
     detect_platform,
     inspect,
     installed_component_matches,
+    load_install_receipt,
     load_manifest,
     verify_bundle,
 )
@@ -142,6 +144,27 @@ class BootstrapTests(unittest.TestCase):
         report = inspect(PROJECT_ROOT, skip_platform=True, system_root=system_root)
         self.assertFalse(report.governor_installed)
         self.assertFalse(report.ready)
+
+    def test_root_inaccessible_polkit_rule_uses_root_owned_install_receipt(self):
+        system_root = Path(self.tmp.name) / "installed-system"
+        result = install_bundle(PROJECT_ROOT, system_root, manage_services=False)
+        self.assertTrue(result["ok"], result)
+        receipt = load_install_receipt(system_root)
+        polkit_path = "/etc/polkit-1/rules.d/49-bc250-custom-pannel.rules"
+        self.assertIn(polkit_path, receipt)
+
+        original = installed_component_matches
+
+        def unreadable_polkit(project_root, component, candidate_root):
+            if component.get("install_path") == polkit_path:
+                return False
+            return original(project_root, component, candidate_root)
+
+        with patch("bc250.bootstrap.installed_component_matches", side_effect=unreadable_polkit):
+            report = inspect(PROJECT_ROOT, skip_platform=True, system_root=system_root)
+
+        self.assertTrue(report.helper_installed)
+        self.assertTrue(report.ready)
 
     def test_ready_requires_installed_license_support_files(self):
         self.assertIn("support_installed", {field.name for field in fields(BootstrapReport)})

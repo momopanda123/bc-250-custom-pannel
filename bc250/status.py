@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import platform
+import json
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -54,6 +55,12 @@ class StatusSnapshot:
     system: SystemInfo
     cpu_cores: int | None = None
     cpu_threads: int | None = None
+    cu_masks: tuple[int, int, int, int] | None = None
+    cu_saved_masks: tuple[int, int, int, int] | None = None
+    cu_verified: bool | None = None
+    voltage_limit: int | None = None
+    cpu_recovery_phase: str | None = None
+    cpu_saved_mode: bool | None = None
     errors: tuple[UserMessage, ...] = field(default_factory=tuple)
 
 
@@ -87,6 +94,11 @@ def parse_cu_result(journal: str) -> int | None:
 
 
 def masks_to_cu_count(csv: str | None) -> int | None:
+    masks = parse_mask_csv(csv)
+    return sum(mask.bit_count() * 2 for mask in masks) if masks is not None else None
+
+
+def parse_mask_csv(csv: str | None) -> tuple[int, int, int, int] | None:
     if not csv:
         return None
     items = [item.strip() for item in csv.split(",")]
@@ -98,7 +110,7 @@ def masks_to_cu_count(csv: str | None) -> int | None:
         return None
     if any(mask < 0 or mask > 0x1F for mask in masks):
         return None
-    return sum(mask.bit_count() * 2 for mask in masks)
+    return tuple(masks)  # type: ignore[return-value]
 
 
 def read_saved_masks(path: Path = Path("/etc/bc250-cu-live-manager.conf")) -> tuple[str | None, int | None]:
@@ -111,6 +123,49 @@ def read_saved_masks(path: Path = Path("/etc/bc250-cu-live-manager.conf")) -> tu
         return None, None
     value = match.group(1).strip().strip('"')
     return value, masks_to_cu_count(value)
+
+
+def read_cu_readback(path: Path) -> tuple[tuple[int, int, int, int] | None, bool | None]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None, None
+    if not isinstance(payload, dict):
+        return None, None
+    actual = payload.get("actual_masks")
+    requested = payload.get("requested_masks")
+    try:
+        actual_masks = parse_mask_csv(",".join(str(int(value)) for value in actual))
+        requested_masks = parse_mask_csv(",".join(str(int(value)) for value in requested))
+    except (TypeError, ValueError):
+        return None, False
+    verified = bool(payload.get("verified")) and actual_masks == requested_masks
+    return actual_masks, verified
+
+
+def read_cpu_recovery_phase(path: Path) -> str | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    phase = payload.get("phase") if isinstance(payload, dict) else None
+    return str(phase) if phase in {"armed", "active", "failed"} else None
+
+
+def read_saved_cpu_mode(path: Path) -> bool | None:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    match = re.search(r"^CPU_EXTRA_CORES=(.+)$", text, re.MULTILINE)
+    if not match:
+        return None
+    value = match.group(1).strip().lower()
+    if value == "on":
+        return True
+    if value == "off":
+        return False
+    return None
 
 
 def _read_text(path: Path) -> str:
@@ -279,6 +334,9 @@ class StatusCollector:
         cu_config: Path = Path("/etc/bc250-cu-live-manager.conf"),
         hwmon_root: Path = Path("/sys/class/hwmon"),
         cpu_root: Path = Path("/sys/devices/system/cpu"),
+        cu_state_path: Path = Path("/run/bc250-custom-pannel/cu-state.json"),
+        cpu_recovery_path: Path = Path("/var/lib/bc250-custom-pannel/cpu-recovery.json"),
+        cpu_mode_config: Path = Path("/etc/bc250-custom-pannel-cpu.conf"),
     ) -> None:
         self.runner = runner
         self.drm_root = drm_root
@@ -286,6 +344,9 @@ class StatusCollector:
         self.cu_config = cu_config
         self.hwmon_root = hwmon_root
         self.cpu_root = cpu_root
+        self.cu_state_path = cu_state_path
+        self.cpu_recovery_path = cpu_recovery_path
+        self.cpu_mode_config = cpu_mode_config
 
     def _command_text(self, argv: Sequence[str]) -> str:
         try:
@@ -300,8 +361,19 @@ class StatusCollector:
             ["journalctl", "-b", "-u", "bc250-cu-live-manager.service", "--no-pager", "-o", "cat"]
         )
         applied_cu = parse_cu_result(journal)
-        _, saved_cu = read_saved_masks(self.cu_config)
-        if applied_cu is not None and saved_cu == applied_cu:
+        saved_csv, saved_cu = read_saved_masks(self.cu_config)
+        saved_masks = parse_mask_csv(saved_csv)
+        actual_masks, verified = read_cu_readback(self.cu_state_path)
+        if actual_masks is not None:
+            applied_cu = sum(mask.bit_count() * 2 for mask in actual_masks)
+        if actual_masks is not None and verified and saved_masks == actual_masks:
+            cu_count = applied_cu
+            cu_state = UserMessage("status.cu_applied", {"count": cu_count})
+        elif actual_masks is not None:
+            cu_count = applied_cu
+            cu_state = UserMessage("status.cu_mismatch", {"current": applied_cu})
+            errors.append(UserMessage("error.cu_mismatch"))
+        elif applied_cu is not None and saved_cu == applied_cu:
             cu_count = applied_cu
             cu_state = UserMessage("status.cu_applied", {"count": cu_count})
         elif applied_cu is not None:
@@ -341,6 +413,7 @@ class StatusCollector:
             governor_max=_property_number(self.runner, range_path, range_iface, "Max"),
             throttle=_property_number(self.runner, main_path, main_iface, "TemperatureThrottling"),
             recovery=_property_number(self.runner, main_path, main_iface, "TemperatureRecovery"),
+            voltage_limit=_property_number(self.runner, main_path, main_iface, "VoltageLimit"),
             gpu_temperature=gpu_temperature,
             cpu_temperature=cpu_temperature,
             cpu_temperature_source=cpu_temperature_source,
@@ -351,5 +424,10 @@ class StatusCollector:
             system=read_system_info(self.dmi_root),
             cpu_cores=cpu_cores,
             cpu_threads=cpu_threads,
+            cu_masks=actual_masks,
+            cu_saved_masks=saved_masks,
+            cu_verified=verified,
+            cpu_recovery_phase=read_cpu_recovery_phase(self.cpu_recovery_path),
+            cpu_saved_mode=read_saved_cpu_mode(self.cpu_mode_config),
             errors=tuple(errors),
         )

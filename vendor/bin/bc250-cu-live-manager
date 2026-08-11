@@ -20,6 +20,7 @@ SERVICE_NAME="bc250-cu-live-manager.service"
 SERVICE_PATH="/etc/systemd/system/$SERVICE_NAME"
 SERVICE_BIN="/usr/local/bin/bc250-cu-live-manager"
 SERVICE_CONF="/etc/bc250-cu-live-manager.conf"
+STATE_FILE="/run/bc250-custom-pannel/cu-state.json"
 OLD_UDEV_RULE="/etc/udev/rules.d/99-bc250-cu-live-manager.rules"
 # CPU core unlock: SMN index/data window at PCI config 0xB8/0xBC on the GNB.
 SMN_PCI_DEV="0000:00:00.0"
@@ -83,7 +84,9 @@ Usage:
   sudo ./$SCRIPT_NAME table
   sudo ./$SCRIPT_NAME enable-wgp SE.SH.WGP [...]
   sudo ./$SCRIPT_NAME disable-wgp SE.SH.WGP [...]
+  sudo ./$SCRIPT_NAME apply-masks MASK0,MASK1,MASK2,MASK3
   sudo ./$SCRIPT_NAME cpu-unlock
+  sudo ./$SCRIPT_NAME cpu-mask
   sudo ./$SCRIPT_NAME install-service
   sudo ./$SCRIPT_NAME write-service-table
   sudo ./$SCRIPT_NAME apply-service
@@ -97,9 +100,11 @@ Commands:
   disable all             Disable all dispatch WGPs on all shader arrays.
   enable-wgp LIST         Enable specific WGP pairs, e.g. 1.0.4.
   disable-wgp LIST        Disable specific WGP pairs, e.g. 1.0.4.
+  apply-masks CSV         Apply four exact SE/SH WGP masks and verify readback.
   stock-dispatch          Restore SPI/RLC dispatch to the boot driver topology.
   cpu-unlock              Unlock the 2 factory-disabled CPU cores via the SMU
                           (6c/12t -> 8c/16t), then offer a reboot to apply.
+  cpu-mask                Read the low byte of the CPU core presence mask.
   install-service         Install/update the boot service.
   write-service-table     Save the current WGP table as the boot profile.
   apply-service           Apply the table saved for the boot service.
@@ -244,7 +249,7 @@ needs_root_command() {
 root_reason_for_command() {
 	local cmd="$1"
 	case "$cmd" in
-		""|menu|status|table|apply-service|stock-dispatch|enable|disable|enable-wgp|disable-wgp)
+		""|menu|status|table|apply-service|apply-masks|stock-dispatch|enable|disable|enable-wgp|disable-wgp)
 			printf '%s' "it needs live UMR register access"
 			return 0
 			;;
@@ -252,7 +257,7 @@ root_reason_for_command() {
 			printf '%s' "it needs root to write systemd/service files under /etc"
 			return 0
 			;;
-		cpu-unlock)
+		cpu-unlock|cpu-mask)
 			printf '%s' "it needs root for SMU access through PCI config space"
 			return 0
 			;;
@@ -444,6 +449,54 @@ load_service_masks() {
 		service_masks[$idx]="$value"
 	done
 	return 0
+}
+
+parse_exact_masks() {
+	local csv="$1" item idx value
+	local -a items
+	IFS=',' read -ra items <<<"$csv"
+	[ "${#items[@]}" -eq 4 ] || die "apply-masks requires exactly four comma-separated masks"
+	target_masks=()
+	for idx in 0 1 2 3; do
+		item="${items[$idx]}"
+		[[ "$item" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]] || die "invalid WGP mask '$item'"
+		value=$((item))
+		[ "$value" -ge 0 ] && [ "$value" -le 31 ] || die "WGP mask '$item' is outside 0x00..0x1f"
+		target_masks[$idx]="$value"
+	done
+}
+
+mask_json_values() {
+	local -n ref="$1"
+	printf '%d,%d,%d,%d' "${ref[0]}" "${ref[1]}" "${ref[2]}" "${ref[3]}"
+}
+
+write_cu_state() {
+	local verified="$1" detail="$2" tmp
+	mkdir -p "$(dirname "$STATE_FILE")"
+	tmp="$(mktemp "${STATE_FILE}.XXXXXX")"
+	printf '{"verified":%s,"requested_masks":[%s],"actual_masks":[%s],"detail":"%s"}\n' \
+		"$verified" \
+		"$(mask_json_values target_masks)" \
+		"$(mask_json_values current_masks)" \
+		"$detail" >"$tmp"
+	chmod 0644 "$tmp"
+	mv -f "$tmp" "$STATE_FILE"
+}
+
+verify_target_masks() {
+	local idx verified=true detail="readback verified"
+	read_current_masks
+	for idx in 0 1 2 3; do
+		if [ "$((current_masks[idx] & 31))" -ne "$((target_masks[idx] & 31))" ]; then
+			verified=false
+			detail="register readback mismatch"
+			break
+		fi
+	done
+	write_cu_state "$verified" "$detail"
+	[ "$verified" = true ] || die "CU register readback mismatch: requested $(mask_csv target_masks), actual $(mask_csv current_masks)"
+	info "CU register readback verified: $(mask_csv current_masks)"
 }
 
 service_masks_match_current() {
@@ -770,6 +823,23 @@ cpu_unlock() {
 	if [ "$CPU_UNLOCK_REBOOT_NEEDED" -eq 1 ]; then
 		offer_cpu_unlock_reboot
 	fi
+}
+
+cpu_mask() {
+	need_root
+	check_bc250 || [ "$FORCE" -eq 1 ] || die "BC-250 PCI ID was not detected"
+	have_setpci || die "setpci or PCI device $SMN_PCI_DEV unavailable"
+	local mask rc=0 governor_was_active=0
+	if systemctl is-active --quiet "$GOVERNOR_SERVICE" 2>/dev/null; then
+		governor_was_active=1
+		systemctl stop "$GOVERNOR_SERVICE"
+	fi
+	mask="$(smn_read32 "$CPU_MASK_REG")" || rc=$?
+	if [ "$governor_was_active" -eq 1 ]; then
+		systemctl start "$GOVERNOR_SERVICE" || warn "failed to restart $GOVERNOR_SERVICE"
+	fi
+	[ "$rc" -eq 0 ] && [ -n "$mask" ] || die "failed to read CPU core presence mask"
+	printf '0x%02X\n' "$((mask & 0xFF))"
 }
 
 cpu_status() {
@@ -1357,6 +1427,21 @@ apply_target_masks() {
 		warn "could not write $REG_RLC; continuing with SPI masks applied"
 	fi
 	info "dispatch registers updated ($(dispatch_total)/40 CUs target)"
+	verify_target_masks
+}
+
+apply_exact_masks() {
+	[ "$#" -eq 1 ] || die "apply-masks requires one MASK0,MASK1,MASK2,MASK3 argument"
+	need_root
+	need_umr
+	select_asic
+	require_bc250_for_write
+	local -a current_masks target_masks driver_masks
+	read_current_masks
+	parse_exact_masks "$1"
+	read_driver_wgp_masks || true
+	confirm_dispatch_plan "Apply Exact WGP Masks" || return 0
+	apply_target_masks
 }
 
 table_editor() {
@@ -1557,10 +1642,12 @@ main() {
 		status) status ;;
 		table) table_editor ;;
 		cpu-unlock) cpu_unlock ;;
+		cpu-mask) cpu_mask ;;
 		install-umr) install_umr ;;
 		install-service) install_service ;;
 		write-service-table) write_service_table ;;
 		apply-service) apply_service ;;
+		apply-masks) apply_exact_masks "$@" ;;
 		uninstall-service) uninstall_service ;;
 		menu) interactive_menu ;;
 		enable)

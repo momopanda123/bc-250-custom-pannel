@@ -10,7 +10,13 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from bc250.bootstrap import detect_platform, load_manifest, verify_bundle
+from bc250.bootstrap import (
+    INSTALL_RECEIPT_PATH,
+    INSTALL_RECEIPT_SCHEMA,
+    detect_platform,
+    load_manifest,
+    verify_bundle,
+)
 from bc250_privileged import run_action
 
 
@@ -65,6 +71,34 @@ def _copy_atomic(source: Path, destination: Path, mode: int) -> None:
     finally:
         if os.path.exists(temp_name):
             os.unlink(temp_name)
+
+
+def _write_install_receipt(manifest: dict, root: Path) -> Path:
+    destination = _rooted(root, INSTALL_RECEIPT_PATH)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    components = {
+        str(component["install_path"]): str(component["sha256"]).lower()
+        for component in manifest["components"]
+        if component.get("install_path")
+    }
+    fd, temp_name = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
+            json.dump(
+                {"schema": INSTALL_RECEIPT_SCHEMA, "components": components},
+                stream,
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temp_name, 0o644)
+        os.replace(temp_name, destination)
+    finally:
+        if os.path.exists(temp_name):
+            os.unlink(temp_name)
+    return destination
 
 
 def extend_governor_curve(text: str) -> tuple[str, bool]:
@@ -136,7 +170,7 @@ def service_commands() -> list[list[str]]:
         ["systemctl", "enable", "cyan-skillfish-governor-smu.service"],
         ["systemctl", "restart", "cyan-skillfish-governor-smu.service"],
         ["systemctl", "enable", "bc250-cu-live-manager.service"],
-        ["systemctl", "enable", "--now", "bc250-cpu-mode.service"],
+        ["systemctl", "enable", "bc250-cpu-mode.service"],
     ]
 
 
@@ -172,6 +206,9 @@ def install_bundle(project_root: Path, root: Path = Path("/"), manage_services: 
     migrated: list[str] = []
     try:
         manifest = load_manifest(project_root)
+        receipt_path = _rooted(root, INSTALL_RECEIPT_PATH)
+        if receipt_path.is_file():
+            receipt_path.unlink()
         for component in manifest["components"]:
             install_path = component.get("install_path")
             if not install_path:
@@ -191,12 +228,14 @@ def install_bundle(project_root: Path, root: Path = Path("/"), manage_services: 
                 result = subprocess.run(command, text=True, capture_output=True, timeout=30, check=False)
                 if result.returncode != 0:
                     return _result(False, "install.service_failed", result.stderr.strip() or "서비스 설정 실패", installed=installed)
+        receipt_path = _write_install_receipt(manifest, root)
         return _result(
             True,
             "install.complete",
             "번들 구성요소 설치 완료",
             installed=installed,
             migrated=migrated,
+            receipt=str(receipt_path),
         )
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
         return _result(False, "dialog.operation_failed", str(exc), installed=installed)
@@ -220,6 +259,10 @@ def remove_bundle(project_root: Path, root: Path = Path("/"), manage_services: b
             if destination.is_file():
                 destination.unlink()
                 removed.append(str(destination))
+        receipt_path = _rooted(root, INSTALL_RECEIPT_PATH)
+        if receipt_path.is_file():
+            receipt_path.unlink()
+            removed.append(str(receipt_path))
         if manage_services and root == Path("/"):
             subprocess.run(["systemctl", "daemon-reload"], check=False)
         return _result(True, "install.remove_complete", "번들 구성요소를 제거했습니다.", removed=removed)

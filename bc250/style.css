@@ -43,16 +43,11 @@ window {
   font-weight: 750;
 }
 
-.last-update,
 .metric-detail,
 .setup-detail,
 .core-state,
 .inline-status {
   color: @text_muted;
-}
-
-.last-update {
-  font-size: 9px;
 }
 
 .language-selector {
@@ -74,6 +69,10 @@ window {
   padding: 0 4px;
 }
 
+.overview-strip .language-selector {
+  min-width: 78px;
+}
+
 .dashboard {
   background-color: @app_bg;
 }
@@ -82,12 +81,12 @@ window {
   background-image: linear-gradient(90deg, alpha(@pink, 0.14), alpha(@surface, 0.96));
   border-left: 3px solid @pink;
   border-radius: 8px;
-  padding: 5px 9px;
+  padding: 3px 5px;
 }
 
 .hero-title {
   color: @text_main;
-  font-size: 17px;
+  font-size: 15px;
   font-weight: 800;
 }
 
@@ -95,49 +94,53 @@ window {
   color: @pink;
   font-size: 11px;
   font-weight: 700;
-  background-color: alpha(@pink, 0.09);
-  border: 1px solid alpha(@pink, 0.30);
-  border-radius: 99px;
-  padding: 3px 8px;
 }
 
-.status-badge {
-  border-radius: 99px;
-  padding: 2px 6px;
-  font-size: 9px;
-  font-weight: 750;
-  margin-right: 3px;
+.overview-system-row {
+  border-top: 1px solid alpha(@pink, 0.24);
+  padding-top: 2px;
 }
 
 .status-good {
   color: @mint;
-  background-color: alpha(@mint, 0.10);
-  border: 1px solid alpha(@mint, 0.34);
 }
 
 .status-warn {
   color: @amber;
-  background-color: alpha(@amber, 0.10);
-  border: 1px solid alpha(@amber, 0.34);
 }
 
 .status-error {
   color: @error;
-  background-color: alpha(@error, 0.10);
-  border: 1px solid alpha(@error, 0.34);
 }
 
 .setup-banner {
   background-color: alpha(@amber, 0.08);
   border: 1px solid alpha(@amber, 0.30);
   border-radius: 8px;
-  padding: 3px 7px;
+  padding: 2px 5px;
 }
 
 .setup-title {
   color: @amber;
   font-size: 11px;
   font-weight: 750;
+}
+
+.setup-banner.setup-ready {
+  background-color: alpha(@surface_raised, 0.72);
+  border-color: alpha(@mint, 0.42);
+}
+
+.setup-banner.setup-ready .setup-title {
+  color: @mint;
+}
+
+.setup-banner.setup-ready button {
+  color: @text_muted;
+  background-color: transparent;
+  background-image: none;
+  border: 1px solid @border;
+  box-shadow: none;
 }
 
 .setup-detail {
@@ -158,7 +161,7 @@ window {
 }
 
 .telemetry-cell {
-  padding: 5px 8px;
+  padding: 3px 5px;
   background-color: @surface;
 }
 
@@ -206,7 +209,7 @@ window {
 
 .metric-value {
   color: @text_main;
-  font-size: 17px;
+  font-size: 15px;
   font-weight: 800;
 }
 
@@ -215,7 +218,7 @@ window {
   border: 1px solid @border;
   border-top: 2px solid alpha(@violet, 0.65);
   border-radius: 11px;
-  padding: 7px 9px;
+  padding: 4px 5px;
 }
 
 .core-surface {
@@ -223,7 +226,7 @@ window {
   border: 1px solid @border;
   border-top: 2px solid alpha(@blue, 0.65);
   border-radius: 11px;
-  padding: 6px 8px 7px;
+  padding: 4px 5px;
 }
 
 .power-surface {
@@ -231,7 +234,7 @@ window {
   border: 1px solid alpha(@mint, 0.35);
   border-left: 3px solid @mint;
   border-radius: 9px;
-  padding: 5px 8px;
+  padding: 3px 5px;
 }
 
 .power-idle-value {
@@ -252,33 +255,123 @@ window {
 }
 
 .core-pane {
-  padding: 2px 10px 0;
+  padding: 0 4px;
 }
 
 .core-value {
   color: @text_main;
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 850;
 }
 
 .core-state {
-  font-size: 10px;
-  min-height: 14px;
+  font-size: 9px;
+  min-height: 12px;
 }
 
-.system-strip {
-  background-image: linear-gradient(90deg, alpha(@surface_raised, 0.88), alpha(@surface, 0.78));
-  border: 1px solid alpha(@border, 0.85);
-  border-radius: 8px;
+.wgp-grid {
+  margin-top: 2px;
+}
+
+.wgp-header,
+.wgp-row-label {
+  color: @text_muted;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.wgp-cell {
+  min-width: 0;
+  min-height: 16px;
+  padding: 0;
+  background-color: transparent;
+  border: none;
+}
+
+.core-surface .wgp-cell {
+  min-width: 14px;
+  min-height: 14px;
+  margin: 0;
+  padding: 0;
+  background-color: transparent;
+  border: none;
+}
+
+.core-surface .wgp-cell check {
+  min-width: 14px;
+  min-height: 14px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid @border;
+  border-radius: 4px;
+  background-color: alpha(@surface_raised, 0.90);
+}
+
+.wgp-cell:checked {
+  background-color: transparent;
+  border-color: transparent;
+}
+
+.wgp-cell:checked check {
+  background-color: alpha(@blue, 0.42);
+  border-color: alpha(@blue, 0.95);
+}
+
+.wgp-base check {
+  background-color: alpha(@cyan, 0.16);
+  border-color: alpha(@cyan, 0.48);
+}
+
+.wgp-base:disabled {
+  opacity: 0.52;
+}
+
+.wgp-base:disabled check {
+  background-color: alpha(@text_muted, 0.14);
+  border-color: alpha(@text_muted, 0.46);
+  box-shadow: none;
+}
+
+.wgp-verified:checked check {
+  background-color: alpha(@mint, 0.26);
+  border-color: @mint;
+}
+
+.wgp-live-only check,
+.wgp-mismatch check {
+  background-color: alpha(@amber, 0.22);
+  border-color: @amber;
+}
+
+.global-actions {
+  background-image: linear-gradient(90deg, alpha(@violet, 0.10), alpha(@cyan, 0.10));
+  border: 1px solid @border;
+  border-radius: 9px;
+  padding: 2px 5px;
+}
+
+.global-actions button {
+  color: #FFFFFF;
+  min-height: 24px;
+  font-weight: 800;
 }
 
 .system-cell {
-  padding: 4px 9px;
+  min-width: 0;
+  padding: 2px 5px;
+  background-color: alpha(@surface_raised, 0.52);
+  border: 1px solid alpha(@pink, 0.20);
+  border-radius: 5px;
 }
 
-.system-cell:first-child,
-.system-cell:last-child {
-  min-width: 260px;
+.system-cell .field-label,
+.system-cell .system-value {
+  min-width: 0;
+}
+
+.system-bios,
+.system-kernel {
+  min-width: 0;
 }
 
 .system-value {
@@ -292,8 +385,12 @@ dropdown,
 spinbutton {
   color: #FFFFFF;
   border-radius: 7px;
-  min-height: 24px;
+  min-height: 22px;
   font-size: 11px;
+}
+
+button {
+  padding: 1px 5px;
 }
 
 dropdown,
@@ -331,6 +428,22 @@ spinbutton {
   font-weight: 800;
 }
 
+.power-surface dropdown {
+  color: @text_main;
+  background-color: @surface_raised;
+  border: 1px solid alpha(@mint, 0.58);
+  box-shadow: none;
+}
+
+.power-surface dropdown button {
+  color: #FFFFFF;
+  background: transparent;
+  background-image: none;
+  border: none;
+  box-shadow: none;
+  font-weight: 750;
+}
+
 .core-surface button:checked,
 .power-surface button:checked {
   box-shadow: inset 0 0 0 2px alpha(#FFFFFF, 0.32);
@@ -363,9 +476,21 @@ spinbutton {
 
 .cpu-action {
   color: #FFFFFF;
-  background-color: alpha(@blue, 0.20);
-  border: 1px solid alpha(@blue, 0.54);
   font-weight: 750;
+}
+
+.core-surface .cpu-action {
+  color: #FFFFFF;
+  background-color: alpha(@surface_raised, 0.88);
+  border: 1px solid @border;
+  box-shadow: none;
+}
+
+.core-surface .cpu-action:checked {
+  color: #FFFFFF;
+  background-color: alpha(@blue, 0.50);
+  border: 1px solid @blue;
+  box-shadow: inset 0 0 0 2px alpha(#FFFFFF, 0.22);
 }
 
 .primary-action:focus,

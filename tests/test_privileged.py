@@ -13,6 +13,10 @@ max = 1800
 [temperature]
 throttling = 85
 throttling_recovery = 75
+
+[gpu]
+set-method = "smu"
+voltage-limit = 930
 """
 
 
@@ -65,7 +69,7 @@ class PrivilegedHelperTests(unittest.TestCase):
     def test_save_custom_governor_writes_user_frequency_range(self):
         result = run_action(
             "save-governor-custom",
-            {"min_mhz": 0, "max_mhz": 4_294_967_295, "throttle": 255, "recovery": 255},
+            {"min_mhz": 0, "max_mhz": 4_294_967_295, "max_mv": 4_294_967_295, "throttle": 255, "recovery": 255},
             self.root,
         )
 
@@ -75,6 +79,82 @@ class PrivilegedHelperTests(unittest.TestCase):
         self.assertIn("max = 4294967295", text)
         self.assertIn("throttling = 255", text)
         self.assertIn("throttling_recovery = 255", text)
+        self.assertIn("voltage-limit = 4294967295", text)
+
+    def test_global_apply_validates_every_field_before_touching_hardware(self):
+        before = (self.root / "etc/cyan-skillfish-governor-smu/config.toml").read_bytes()
+        result = run_action(
+            "apply-all",
+            {
+                "min_mhz": 1800,
+                "max_mhz": 1700,
+                "max_mv": 930,
+                "throttle": 85,
+                "recovery": 75,
+                "cpu_extra_cores": "on",
+                "cu_masks": "0x07,0x07,0x07,0x07",
+                "persist": "on",
+            },
+            self.root,
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual((self.root / "etc/cyan-skillfish-governor-smu/config.toml").read_bytes(), before)
+
+    def test_global_save_applies_all_hardware_then_persists_exact_values(self):
+        args = {
+            "min_mhz": 500,
+            "max_mhz": 1800,
+            "max_mv": 930,
+            "throttle": 85,
+            "recovery": 75,
+            "cpu_extra_cores": "on",
+            "cu_masks": "0x07,0x0f,0x17,0x1f",
+            "persist": "on",
+        }
+        ok = {"ok": True, "message_id": "ok", "message_args": {}, "message": "ok"}
+        with (
+            patch("bc250_privileged._apply_governor_runtime", return_value=ok) as governor,
+            patch("bc250_privileged._apply_cu_masks", return_value=ok) as cu_apply,
+            patch("bc250_privileged._save_cpu_mode", return_value={**ok, "reboot_required": True}) as cpu,
+            patch("bc250_privileged._save_governor_values", return_value={**ok, "backup": "/g"}) as governor_save,
+            patch("bc250_privileged._save_cu_masks", return_value={**ok, "backup": "/c"}) as cu_save,
+        ):
+            result = run_action("apply-all", args, self.root)
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["message_id"], "helper.all_saved")
+        self.assertEqual(result["cu_count"], 32)
+        self.assertTrue(result["reboot_required"])
+        governor.assert_called_once_with(500, 1800, 930, 85, 75)
+        cu_apply.assert_called_once_with((7, 15, 23, 31), self.root)
+        cpu.assert_called_once_with(True, self.root)
+        governor_save.assert_called_once_with(500, 1800, 85, 75, self.root, 930, restart_service=False)
+        cu_save.assert_called_once_with((7, 15, 23, 31), self.root)
+
+    def test_cpu_boot_recovery_requests_only_one_warm_reboot_per_attempt(self):
+        self._write_cpu_topology(range(12), set(range(12)))
+        (self.root / "etc/bc250-custom-pannel-cpu.conf").write_text("CPU_EXTRA_CORES=on\n", encoding="utf-8")
+        boot_id = self.root / "proc/sys/kernel/random/boot_id"
+        boot_id.parent.mkdir(parents=True)
+        boot_id.write_text("cold-boot\n", encoding="utf-8")
+        completed = __import__("subprocess").CompletedProcess([], 0, "0x77\n", "")
+        unlocked = __import__("subprocess").CompletedProcess([], 0, "armed\n", "")
+
+        with patch("bc250_privileged.subprocess.run", side_effect=(completed, unlocked)):
+            first = run_action("apply-cpu-mode", {"boot": True}, self.root)
+
+        self.assertTrue(first["ok"], first)
+        self.assertTrue(first["reboot_required"])
+
+        boot_id.write_text("warm-boot\n", encoding="utf-8")
+        still_armed = __import__("subprocess").CompletedProcess([], 0, "0xFF\n", "")
+        with patch("bc250_privileged.subprocess.run", return_value=still_armed) as run:
+            second = run_action("apply-cpu-mode", {"boot": True}, self.root)
+
+        self.assertTrue(second["ok"], second)
+        self.assertEqual(second["message_id"], "helper.cpu_recovery_failed")
+        self.assertEqual(run.call_count, 1)
 
     def test_invalid_custom_governor_range_does_not_change_file(self):
         path = self.root / "etc/cyan-skillfish-governor-smu/config.toml"
@@ -94,7 +174,7 @@ class PrivilegedHelperTests(unittest.TestCase):
         self.assertEqual(result["message_id"], "helper.cu_saved")
         self.assertEqual(result["message_args"], {"count": 32})
         self.assertIsInstance(result["message_args"]["count"], int)
-        self.assertEqual(result["message"], "다음 부팅용 32 CU 프로필을 저장했습니다.")
+        self.assertEqual(result["message"], "Saved 32 CU boot profile.")
         text = (self.root / "etc/bc250-cu-live-manager.conf").read_text(encoding="utf-8")
         self.assertIn("BC250_WGP_MASKS=0x0f,0x0f,0x0f,0x0f", text)
 

@@ -9,6 +9,7 @@ from pathlib import Path
 from bc250.i18n import Translator
 from bc250.messages import UserMessage
 from bc250.presets import PRESETS, validate_frequency_range, validate_temperature
+from bc250.settings import BASE_WGP_MASK, DraftSettings
 
 
 def find_window_method(name):
@@ -39,9 +40,13 @@ def css_rule(css, selector):
 class SensitiveWidget:
     def __init__(self):
         self.sensitive = None
+        self.label = None
 
     def set_sensitive(self, value):
         self.sensitive = value
+
+    def set_label(self, value):
+        self.label = value
 
 
 class ValueWidget:
@@ -76,6 +81,54 @@ class SelectionWidget:
         return self.selected
 
 
+class ToggleWidget:
+    def __init__(self, active):
+        self.active = active
+        self.label = None
+        self.tooltip = None
+
+    def get_active(self):
+        return self.active
+
+    def set_active(self, active):
+        self.active = active
+
+    def set_label(self, label):
+        self.label = label
+
+    def set_tooltip_text(self, text):
+        self.tooltip = text
+
+
+class TextWidget:
+    def __init__(self):
+        self.text = None
+        self.tooltip = None
+
+    def set_text(self, text):
+        self.text = text
+
+    def set_tooltip_text(self, text):
+        self.tooltip = text
+
+
+class StyledTextWidget(TextWidget):
+    def __init__(self):
+        super().__init__()
+        self.css_classes = set()
+
+    def add_css_class(self, css_class):
+        self.css_classes.add(css_class)
+
+    def remove_css_class(self, css_class):
+        self.css_classes.discard(css_class)
+
+
+class MetricWidget:
+    def update(self, _value, _detail=None):
+        pass
+
+
 class AppTests(unittest.TestCase):
     def test_check_mode_reports_gtk(self):
         result = subprocess.run([sys.executable, "app.py", "--check", "--skip-platform"], text=True, capture_output=True)
@@ -92,29 +145,112 @@ class AppTests(unittest.TestCase):
 
     def test_compact_window_contract(self):
         source = Path("bc250/window.py").read_text(encoding="utf-8")
-        self.assertIn("set_default_size(600, 700)", source)
+        self.assertIn("set_default_size(520, -1)", source)
+        self.assertIn("set_size_request(500, -1)", source)
+        self.assertIn("dashboard.set_margin_start(5)", source)
+        self.assertIn("dashboard.set_margin_end(5)", source)
         self.assertNotIn("Gtk.ScrolledWindow", source)
         self.assertNotIn("Gtk.FlowBox", source)
         self.assertIn("self.cpu_core_value", source)
         self.assertIn("self.cpu_mode_toggle", source)
         self.assertIn("self.custom_min_spin", source)
         self.assertIn("self.custom_max_spin", source)
+        self.assertIn("self.custom_mv_spin", source)
+        self.assertIn("self.wgp_buttons", source)
         self.assertIn("self.language_dropdown", source)
         self.assertIn("def _retranslate", source)
+
+    def test_compact_controls_do_not_expand_past_the_520x700_contract(self):
+        source = Path("bc250/window.py").read_text(encoding="utf-8")
+        css = Path("bc250/style.css").read_text(encoding="utf-8")
+        self.assertIn("spin.set_width_chars(7)", source)
+        self.assertIn("spin.set_max_width_chars(7)", source)
+        self.assertIn("(self.recovery_label, self.recovery_spin, 1, 2)", source)
+        self.assertIn(".core-surface .wgp-cell", css)
+        self.assertIn("min-height: 14px;", css_rule(css, ".core-surface .wgp-cell"))
+        self.assertIn("padding: 0;", css_rule(css, ".core-surface .wgp-cell"))
 
     def test_layout_probe_reports_actual_window_and_content_fit(self):
         source = Path("app.py").read_text(encoding="utf-8")
         self.assertIn('parser.add_argument("--layout-check"', source)
         self.assertIn("Layout: window=", source)
         self.assertIn("content-natural=", source)
+        self.assertIn("content_outer_height", source)
         self.assertIn("fits=", source)
+        self.assertIn("width <= 520", source)
+        self.assertIn("height <= 700", source)
+        self.assertIn("set_size_request(510, -1)", source)
+        self.assertIn("horizontal_fits", source)
 
-    def test_header_is_single_line_with_left_status_and_borderless_language_selector(self):
+    def test_setup_components_wrap_without_ellipsis(self):
+        build = ast.unparse(find_window_method("_build_ui"))
+        self.assertIn("Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)", build)
+        self.assertIn("self.setup_detail.set_wrap(True)", build)
+        self.assertNotIn("self.setup_detail.set_ellipsize", build)
+
+    def test_bios_and_kernel_use_equal_overview_cells(self):
+        build = ast.unparse(find_window_method("_build_ui"))
+        self.assertIn("hardware.set_homogeneous(True)", build)
+        self.assertIn("status.add_css_class('system-status')", build)
+        self.assertIn("bios.set_hexpand(True)", build)
+        self.assertIn("kernel.set_hexpand(True)", build)
+        self.assertNotIn("summary.append(self.hero_state)", build)
+        self.assertLess(build.index("hardware.append(status)"), build.index("hardware.append(bios)"))
+
+    def test_core_columns_use_content_width_without_gpu_dead_space(self):
+        node = find_window_method("_build_core_surface")
+        build = ast.unparse(node)
+        core_homogeneous_calls = [
+            call for call in ast.walk(node)
+            if isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and call.func.attr == "set_column_homogeneous"
+            and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == "grid"
+        ]
+        self.assertEqual(core_homogeneous_calls, [])
+        self.assertIn("gpu.set_hexpand(True)", build)
+        self.assertIn("self.wgp_grid.set_hexpand(True)", build)
+        self.assertIn("self.wgp_grid.set_column_homogeneous(True)", build)
+
+    def test_header_is_single_line_without_duplicate_availability_status(self):
         source = Path("bc250/window.py").read_text(encoding="utf-8")
         build = ast.unparse(find_window_method("_build_ui"))
+        header_build = build[:build.index("self.set_titlebar(header)")]
         self.assertNotIn("app_subtitle", source)
-        self.assertIn("header.pack_start(self.status_badge)", build)
+        self.assertNotIn("status_badge", build)
+        self.assertNotIn("header.pack_start", build)
+        self.assertNotIn("language_dropdown", header_build)
         self.assertIn("self.language_dropdown.add_css_class('language-selector')", build)
+        self.assertIn("summary.append(self.language_dropdown)", build)
+        self.assertNotIn("last_update", source)
+        self.assertNotIn("_build_system_strip", source)
+        self.assertIn("self.bios_label", build)
+        self.assertIn("self.kernel_label", build)
+
+    def test_availability_updates_only_the_overview_status_label(self):
+        set_badge, _node = load_window_method("_set_badge")
+        title_status = StyledTextWidget()
+        overview_status = StyledTextWidget()
+        window = types.SimpleNamespace(
+            status_badge=title_status,
+            hero_state=overview_status,
+        )
+
+        set_badge(window, "Partially available", "status-warn")
+
+        self.assertIsNone(title_status.text)
+        self.assertEqual(overview_status.text, "Partially available")
+        self.assertEqual(overview_status.css_classes, {"status-warn"})
+
+    def test_overview_availability_is_plain_text_without_pill_decoration(self):
+        css = Path("bc250/style.css").read_text(encoding="utf-8")
+        forbidden = ("border:", "border-radius:", "background", "padding:")
+        for selector in (".hero-state", ".status-good", ".status-warn", ".status-error"):
+            rule = css_rule(css, selector)
+            for token in forbidden:
+                with self.subTest(selector=selector, token=token):
+                    self.assertNotIn(token, rule)
 
     def test_header_uses_compact_titlebar_controls(self):
         css = Path("bc250/style.css").read_text(encoding="utf-8")
@@ -123,7 +259,7 @@ class AppTests(unittest.TestCase):
         self.assertIn("min-height: 24px;", window_controls)
         self.assertIn("min-width: 24px;", window_controls)
 
-    def test_hero_hardware_summary_includes_cpu_and_gpu_core_counts(self):
+    def test_hero_hardware_summary_keeps_core_counts_without_repeating_app_name(self):
         tree = ast.parse(Path("bc250/window.py").read_text(encoding="utf-8"))
         window_class = next(
             node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow"
@@ -137,12 +273,12 @@ class AppTests(unittest.TestCase):
         snapshot = types.SimpleNamespace(cpu_cores=6, cpu_threads=12, cu_count=40)
         self.assertEqual(
             formatter(object(), snapshot),
-            "BC-250 · CPU 6C/12T · GPU 40/40 CU",
+            "CPU 6C/12T · GPU 40/40 CU",
         )
         missing = types.SimpleNamespace(cpu_cores=None, cpu_threads=None, cu_count=None)
         self.assertEqual(
             formatter(object(), missing),
-            "BC-250 · CPU — · GPU —",
+            "CPU — · GPU —",
         )
 
     def test_cpu_temperature_precedes_gpu_temperature_in_telemetry_grid(self):
@@ -150,6 +286,10 @@ class AppTests(unittest.TestCase):
         self.assertLess(build.index("self.metric_cpu_temp"), build.index("self.metric_gpu_temp"))
         card_tuple = build[build.index("for index, card in enumerate"):]
         self.assertLess(card_tuple.index("self.metric_cpu_temp"), card_tuple.index("self.metric_gpu_temp"))
+
+    def test_telemetry_grid_has_no_redundant_heading(self):
+        build = ast.unparse(find_window_method("_build_ui"))
+        self.assertNotIn("telemetry_title", build)
 
     def test_ready_setup_row_remains_visible_with_install_disabled(self):
         refresh, _node = load_window_method("_refresh_bootstrap")
@@ -165,6 +305,7 @@ class AppTests(unittest.TestCase):
             support_installed=True,
         )
         visibility = []
+        banner_classes = set()
         install = SensitiveWidget()
         with tempfile.TemporaryDirectory() as tmp:
             translator = Translator(Path("bc250/locales"), Path(tmp) / "settings.json", {"LANG": "en_US.UTF-8"})
@@ -172,7 +313,12 @@ class AppTests(unittest.TestCase):
                 project_root=Path("."),
                 translator=translator,
                 _controls_sensitive=True,
-                setup_banner=types.SimpleNamespace(set_visible=visibility.append),
+                setup_banner=types.SimpleNamespace(
+                    set_visible=visibility.append,
+                    add_css_class=banner_classes.add,
+                    remove_css_class=banner_classes.discard,
+                ),
+                setup_title=TextWidget(),
                 setup_detail=types.SimpleNamespace(set_text=lambda _value: None),
                 install_button=install,
                 _render_message=lambda message: translator.render(message),
@@ -182,6 +328,16 @@ class AppTests(unittest.TestCase):
 
         self.assertEqual(visibility, [True])
         self.assertFalse(install.sensitive)
+        self.assertEqual(window.setup_title.text, "Components installed")
+        self.assertEqual(install.label, "Installed")
+        self.assertEqual(banner_classes, {"setup-ready"})
+
+    def test_ready_setup_button_uses_a_quiet_completed_style(self):
+        css = Path("bc250/style.css").read_text(encoding="utf-8")
+        banner = css_rule(css, ".setup-banner.setup-ready")
+        button = css_rule(css, ".setup-banner.setup-ready button")
+        self.assertIn("@mint", banner)
+        self.assertIn("background-color: transparent;", button)
 
     def test_component_install_starts_with_one_click_without_second_confirmation(self):
         node = find_window_method("_on_install")
@@ -211,6 +367,51 @@ class AppTests(unittest.TestCase):
         self.assertFalse(install_done(window, (command, {"ok": True})))
         self.assertLess(events.index(("refresh",)), events.index(("sensitive", True)))
 
+    def test_success_result_uses_a_warning_message_box_when_any_change_requires_reboot(self):
+        show_success, _node = load_window_method("_show_success_result")
+        messages = []
+        window = types.SimpleNamespace(
+            translator=types.SimpleNamespace(gettext=lambda key, **_kwargs: key),
+            _show_message=lambda *args: messages.append(args),
+            _payload_text=lambda *_args: "normal success",
+        )
+        show_success.__globals__["Gtk"] = types.SimpleNamespace(
+            MessageType=types.SimpleNamespace(INFO="info", WARNING="warning")
+        )
+
+        show_success(
+            window,
+            {"ok": True, "reboot_required": True},
+            "dialog.apply_complete",
+            "dialog.apply_complete_detail",
+        )
+
+        self.assertEqual(
+            messages,
+            [("dialog.reboot_required", "dialog.reboot_required_detail", "warning")],
+        )
+
+    def test_success_result_keeps_the_normal_success_message_without_reboot(self):
+        show_success, _node = load_window_method("_show_success_result")
+        messages = []
+        window = types.SimpleNamespace(
+            translator=types.SimpleNamespace(gettext=lambda key, **_kwargs: key),
+            _show_message=lambda *args: messages.append(args),
+            _payload_text=lambda *_args: "normal success",
+        )
+        show_success.__globals__["Gtk"] = types.SimpleNamespace(
+            MessageType=types.SimpleNamespace(INFO="info", WARNING="warning")
+        )
+
+        show_success(
+            window,
+            {"ok": True, "reboot_required": False},
+            "dialog.apply_complete",
+            "dialog.apply_complete_detail",
+        )
+
+        self.assertEqual(messages, [("dialog.apply_complete", "normal success", "info")])
+
     def test_status_refresh_does_not_overwrite_user_tuning_values(self):
         apply_snapshot, _node = load_window_method("_apply_snapshot")
         apply_snapshot.__globals__["PRESETS"] = PRESETS
@@ -219,14 +420,13 @@ class AppTests(unittest.TestCase):
             _alive=True,
             _last_snapshot=None,
             _settings_hydrated=True,
+            _draft_dirty=True,
             custom_min_spin=ValueWidget(650),
             custom_max_spin=ValueWidget(1750),
             throttle_spin=ValueWidget(88),
             recovery_spin=ValueWidget(78),
             profile_dropdown=SelectionWidget(3),
-            cu_dropdown=SelectionWidget(1),
             PRESET_KEYS=(*PRESETS.keys(), "custom"),
-            CU_VALUES=(24, 32, 40),
             _render_snapshot=lambda _snapshot: None,
             _apply_power_state=lambda _state: None,
             _update_custom_controls=lambda: None,
@@ -237,6 +437,7 @@ class AppTests(unittest.TestCase):
             throttle=85,
             recovery=75,
             cu_saved_count=40,
+            voltage_limit=930,
         )
 
         apply_snapshot(window, refreshed)
@@ -246,7 +447,6 @@ class AppTests(unittest.TestCase):
         self.assertEqual(window.throttle_spin.value, 88)
         self.assertEqual(window.recovery_spin.value, 78)
         self.assertEqual(window.profile_dropdown.selected, 3)
-        self.assertEqual(window.cu_dropdown.selected, 1)
 
     def test_custom_selection_preserves_full_unsigned_clock_values(self):
         selected_values, _node = load_window_method("_selected_values")
@@ -254,27 +454,265 @@ class AppTests(unittest.TestCase):
             "PRESETS": PRESETS,
             "validate_frequency_range": validate_frequency_range,
             "validate_temperature": validate_temperature,
+            "DraftSettings": DraftSettings,
         })
         window = types.SimpleNamespace(
             PRESET_KEYS=(*PRESETS.keys(), "custom"),
             profile_dropdown=SelectionWidget(3),
             custom_min_spin=UnsignedSpinWidget(0),
             custom_max_spin=UnsignedSpinWidget(4_294_967_295),
+            custom_mv_spin=UnsignedSpinWidget(4_294_967_295),
             throttle_spin=IntegerSpinWidget(255),
             recovery_spin=IntegerSpinWidget(255),
+            cpu_mode_toggle=ToggleWidget(True),
+            power_suspend_dropdown=SelectionWidget(0),
+            power_suspend_custom_spin=IntegerSpinWidget(15),
+            power_display_dropdown=SelectionWidget(6),
+            power_display_custom_spin=IntegerSpinWidget(17),
+            _selected_cu_masks=lambda: (0x07, 0x0F, 0x17, 0x1F),
+            _power_minutes=lambda dropdown, spin: 0 if dropdown.get_selected() == 0 else spin.get_value_as_int(),
         )
 
-        self.assertEqual(
-            selected_values(window),
-            ("custom", 0, 4_294_967_295, 255, 255),
-        )
+        settings = selected_values(window)
+        self.assertEqual((settings.min_mhz, settings.max_mhz, settings.max_mv), (0, 4_294_967_295, 4_294_967_295))
+        self.assertEqual(settings.cu_masks, (0x07, 0x0F, 0x17, 0x1F))
+        self.assertEqual((settings.suspend_minutes, settings.display_minutes), (0, 17))
 
-    def test_cpu_control_is_a_reversible_toggle_and_can_auto_install_helper(self):
+    def test_cpu_control_is_a_draft_toggle_applied_by_the_global_action(self):
         source = Path("bc250/window.py").read_text(encoding="utf-8")
         self.assertIn("Gtk.ToggleButton", source)
         self.assertIn("def _on_cpu_mode_toggled", source)
-        self.assertIn("install_then_set_cpu_mode", source)
+        self.assertIn("self.privileged.apply_all", source)
+        self.assertNotIn("install_then_set_cpu_mode", source)
         self.assertNotIn("self.cpu_unlock_button", source)
+
+    def test_initial_cpu_draft_preserves_saved_unlock_when_live_topology_is_stock(self):
+        apply_snapshot, _node = load_window_method("_apply_snapshot")
+        apply_snapshot.__globals__["PRESETS"] = PRESETS
+        selection, _node = load_window_method("_cpu_selection_from_snapshot")
+        selected = []
+        window = types.SimpleNamespace(
+            _refreshing=True,
+            _alive=True,
+            _last_snapshot=None,
+            _settings_hydrated=False,
+            _draft_dirty=False,
+            _changing_cpu_toggle=False,
+            _cpu_mode_pending=False,
+            _cpu_selection_from_snapshot=lambda snapshot: selection(window, snapshot),
+            custom_min_spin=ValueWidget(500),
+            custom_max_spin=ValueWidget(1800),
+            custom_mv_spin=ValueWidget(930),
+            profile_dropdown=SelectionWidget(2),
+            PRESET_KEYS=(*PRESETS.keys(), "custom"),
+            throttle_spin=ValueWidget(85),
+            recovery_spin=ValueWidget(75),
+            wgp_buttons={},
+            _sync_cpu_toggle=lambda active: selected.append(active),
+            _render_snapshot=lambda _snapshot: None,
+            _apply_power_state=lambda _state: None,
+            _update_custom_controls=lambda: None,
+        )
+        snapshot = types.SimpleNamespace(
+            governor_min=None,
+            governor_max=None,
+            voltage_limit=None,
+            throttle=None,
+            recovery=None,
+            cu_saved_masks=None,
+            cu_masks=None,
+            cpu_saved_mode=True,
+            cpu_threads=12,
+            cpu_recovery_phase=None,
+        )
+
+        apply_snapshot(window, snapshot)
+
+        self.assertEqual(selected, [True])
+
+    def test_cpu_snapshot_selection_prefers_saved_mode_over_temporary_live_topology(self):
+        selection, _node = load_window_method("_cpu_selection_from_snapshot")
+        window = types.SimpleNamespace(_cpu_mode_pending=False)
+        saved_on_live_stock = types.SimpleNamespace(
+            cpu_recovery_phase=None,
+            cpu_saved_mode=True,
+            cpu_threads=12,
+        )
+        saved_off_live_unlocked = types.SimpleNamespace(
+            cpu_recovery_phase=None,
+            cpu_saved_mode=False,
+            cpu_threads=16,
+        )
+
+        self.assertTrue(selection(window, saved_on_live_stock))
+        self.assertFalse(selection(window, saved_off_live_unlocked))
+
+    def test_cpu_toggle_click_refreshes_the_action_from_native_state(self):
+        handler, _node = load_window_method("_on_cpu_mode_toggled")
+        resyncs = []
+        window = types.SimpleNamespace(
+            _changing_cpu_toggle=False,
+            _draft_dirty=False,
+            _cpu_draft_changed=False,
+            _sync_cpu_toggle=lambda active: resyncs.append(active),
+        )
+        toggle = ToggleWidget(False)
+
+        handler(window, toggle)
+
+        self.assertTrue(window._draft_dirty)
+        self.assertTrue(window._cpu_draft_changed)
+        self.assertFalse(toggle.get_active())
+        self.assertEqual(resyncs, [False])
+
+        toggle.set_active(True)
+        handler(window, toggle)
+        self.assertEqual(resyncs, [False, True])
+
+    def test_cpu_toggle_label_exposes_the_reverse_action_for_both_states(self):
+        sync, _node = load_window_method("_sync_cpu_toggle")
+        toggle = ToggleWidget(False)
+        window = types.SimpleNamespace(
+            _changing_cpu_toggle=False,
+            cpu_mode_toggle=toggle,
+            translator=types.SimpleNamespace(gettext=lambda key: key),
+        )
+
+        sync(window, False)
+        self.assertEqual(toggle.label, "action.enable_cpu")
+        sync(window, True)
+        self.assertEqual(toggle.label, "action.disable_cpu")
+
+    def test_cpu_state_uses_a_tooltip_instead_of_a_repeated_visible_line(self):
+        render, _node = load_window_method("_render_snapshot")
+        render.__globals__["UNKNOWN"] = "unknown"
+        labels = {name: TextWidget() for name in (
+            "governor_value", "bios_value", "kernel_value", "cpu_core_value",
+            "cpu_state_label", "cu_state_label", "hero_title", "hero_state",
+        )}
+        window = types.SimpleNamespace(
+            translator=types.SimpleNamespace(gettext=lambda key, **_kwargs: key),
+            metric_gpu_temp=MetricWidget(),
+            metric_cpu_temp=MetricWidget(),
+            metric_power=MetricWidget(),
+            metric_clock=MetricWidget(),
+            metric_voltage=MetricWidget(),
+            metric_fan=MetricWidget(),
+            wgp_buttons={},
+            _cpu_mode_pending=False,
+            _draft_dirty=True,
+            _cpu_draft_changed=True,
+            _controls_sensitive=True,
+            cpu_mode_toggle=ToggleWidget(False),
+            _render_message=lambda message: str(message),
+            _update_selected_cu_text=lambda: None,
+            _hero_hardware_text=lambda _snapshot: "hardware",
+            _hero_badge=lambda _snapshot: ("status.partial", "status-warn"),
+            _hero_status_text=lambda _snapshot: "status",
+            _set_badge=lambda _text, _style: None,
+            _set_controls_sensitive=lambda _value: None,
+            **labels,
+        )
+        snapshot = types.SimpleNamespace(
+            gpu_temperature="42 C",
+            cpu_temperature="43 C",
+            cpu_temperature_source="Tctl",
+            power="35 W",
+            clock="1700 MHz",
+            voltage="920 mV",
+            fan=types.SimpleNamespace(state="unknown", rpm=0, label="", active_count=0),
+            system=types.SimpleNamespace(
+                bios_vendor="AMI", bios_version="P3.00", bios_date="2026-01-01",
+                kernel_release="6.19", architecture="x86_64",
+            ),
+            governor_min=None,
+            governor_max=None,
+            governor_service="active",
+            cpu_cores=6,
+            cpu_threads=12,
+            cpu_saved_mode=True,
+            cpu_recovery_phase=None,
+            cu_masks=None,
+            cu_saved_masks=None,
+            cu_verified=False,
+            cu_state="unknown",
+            cu_saved_count=None,
+            collected_at=types.SimpleNamespace(strftime=lambda _format: "12:00:00"),
+        )
+
+        render(window, snapshot)
+
+        self.assertEqual(window.cpu_mode_toggle.tooltip, "status.cpu_saved_unlock_mismatch")
+
+    def test_gpu_core_card_has_fixed_base_and_individual_optional_wgp_cells(self):
+        source = Path("bc250/window.py").read_text(encoding="utf-8")
+        build = ast.unparse(find_window_method("_build_core_surface"))
+        self.assertIn("for row, name in enumerate", build)
+        self.assertIn("for wgp in range(5)", build)
+        self.assertIn("button.set_sensitive(wgp >= 3)", build)
+        self.assertIn("button.set_active(wgp < 3)", build)
+        self.assertNotIn("cu_dropdown", source)
+        self.assertNotIn("cu_save_button", source)
+        self.assertNotIn("cpu_state_label", build)
+        self.assertNotIn("cu_state_label", build)
+
+    def test_wgp_checkboxes_center_only_the_square_indicator(self):
+        build = ast.unparse(find_window_method("_build_core_surface"))
+        css = Path("bc250/style.css").read_text(encoding="utf-8")
+        outer = css_rule(css, ".core-surface .wgp-cell")
+        indicator = css_rule(css, ".core-surface .wgp-cell check")
+        self.assertIn("button.set_halign(Gtk.Align.CENTER)", build)
+        self.assertIn("background-color: transparent;", outer)
+        self.assertIn("border: none;", outer)
+        self.assertIn("border: 1px solid", indicator)
+        self.assertIn("border-radius:", indicator)
+
+    def test_fixed_base_wgp_cells_are_visually_disabled(self):
+        css = Path("bc250/style.css").read_text(encoding="utf-8")
+        disabled = css_rule(css, ".wgp-base:disabled")
+        disabled_check = css_rule(css, ".wgp-base:disabled check")
+        self.assertIn("opacity:", disabled)
+        self.assertIn("background-color:", disabled_check)
+        self.assertIn("border-color:", disabled_check)
+
+    def test_cpu_toggle_checked_and_unchecked_styles_are_visibly_distinct(self):
+        css = Path("bc250/style.css").read_text(encoding="utf-8")
+        unchecked = css_rule(css, ".core-surface .cpu-action")
+        checked = css_rule(css, ".core-surface .cpu-action:checked")
+        self.assertIn("background-color:", unchecked)
+        self.assertIn("background-color:", checked)
+        self.assertNotEqual(unchecked, checked)
+
+    def test_only_one_global_apply_and_save_pair_controls_all_cards(self):
+        source = Path("bc250/window.py").read_text(encoding="utf-8")
+        ui_build = ast.unparse(find_window_method("_build_ui"))
+        build = ast.unparse(find_window_method("_build_global_actions"))
+        self.assertIn("self.apply_button", build)
+        self.assertIn("self.save_button", build)
+        self.assertEqual(source.count("self.apply_button = Gtk.Button()"), 1)
+        self.assertEqual(source.count("self.save_button = Gtk.Button()"), 1)
+        self.assertTrue(ui_build.rstrip().endswith("dashboard.append(self._build_global_actions())"))
+
+    def test_global_apply_and_save_stay_enabled_when_components_need_update(self):
+        set_sensitive, _node = load_window_method("_set_controls_sensitive")
+        apply_button = SensitiveWidget()
+        save_button = SensitiveWidget()
+        install_button = SensitiveWidget()
+        window = types.SimpleNamespace(
+            _governor_ready=False,
+            _helper_ready=False,
+            _install_eligible=True,
+            _cpu_mode_eligible=True,
+            apply_button=apply_button,
+            save_button=save_button,
+            install_button=install_button,
+        )
+
+        set_sensitive(window, True)
+
+        self.assertTrue(apply_button.sensitive)
+        self.assertTrue(save_button.sensitive)
+        self.assertTrue(install_button.sensitive)
 
     def test_power_idle_card_uses_timeout_dropdowns_with_custom_minutes(self):
         source = Path("bc250/window.py").read_text(encoding="utf-8")
@@ -293,6 +731,16 @@ class AppTests(unittest.TestCase):
                 self.assertIn(token, source)
         self.assertNotIn("self.power_suspend_toggle", source)
         self.assertNotIn("self.power_display_toggle", source)
+        self.assertNotIn("_run_async", ast.unparse(find_window_method("_on_power_suspend_changed")))
+        self.assertNotIn("_run_async", ast.unparse(find_window_method("_on_power_display_changed")))
+
+    def test_power_dropdown_values_are_visually_separate_from_card_actions(self):
+        css = Path("bc250/style.css").read_text(encoding="utf-8")
+        dropdown = css_rule(css, ".power-surface dropdown")
+        button = css_rule(css, ".power-surface dropdown button")
+        self.assertIn("background-color: @surface_raised;", dropdown)
+        self.assertIn("background: transparent;", button)
+        self.assertIn("border: none;", button)
 
     def test_each_card_has_its_own_accent_and_card_buttons_share_that_accent(self):
         css = Path("bc250/style.css").read_text(encoding="utf-8")
@@ -434,16 +882,21 @@ class AppTests(unittest.TestCase):
                 message=UserMessage("platform.arch_unsupported", {"architecture": "aarch64"}),
             ),
         )
-        widgets = [SensitiveWidget() for _ in range(4)]
+        widgets = [SensitiveWidget() for _ in range(3)]
         window = types.SimpleNamespace(
             project_root=Path("."),
+            translator=types.SimpleNamespace(gettext=lambda key, **_kwargs: key),
             _controls_sensitive=True,
-            setup_banner=types.SimpleNamespace(set_visible=lambda _value: None),
+            setup_banner=types.SimpleNamespace(
+                set_visible=lambda _value: None,
+                add_css_class=lambda _value: None,
+                remove_css_class=lambda _value: None,
+            ),
+            setup_title=types.SimpleNamespace(set_text=lambda _value: None),
             setup_detail=types.SimpleNamespace(set_text=lambda _value: None),
             apply_button=widgets[0],
             save_button=widgets[1],
-            cu_save_button=widgets[2],
-            install_button=widgets[3],
+            install_button=widgets[2],
             _render_message=lambda _message: "unsupported",
         )
         refresh.__globals__.update({"inspect": lambda _root: report, "UserMessage": UserMessage})
@@ -451,8 +904,8 @@ class AppTests(unittest.TestCase):
         refresh(window)
         set_sensitive(window, True)
 
-        self.assertEqual([widget.sensitive for widget in widgets[:3]], [False, False, True])
-        self.assertFalse(widgets[3].sensitive)
+        self.assertEqual([widget.sensitive for widget in widgets[:2]], [False, False])
+        self.assertFalse(widgets[2].sensitive)
 
     def test_show_message_builds_translated_close_action(self):
         node = find_window_method("_show_message")

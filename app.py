@@ -46,6 +46,10 @@ class BC250Application(Gtk.Application):
     def do_activate(self) -> None:
         if self.window is None:
             self.window = MainWindow(self, PROJECT_ROOT, self.translator, demo=self.demo)
+        if self.layout_check and self.window.get_child() is not None:
+            # A bare Xvfb session has no window manager to honor default_size.
+            # Pin only the production width; height must follow the content.
+            self.window.get_child().set_size_request(510, -1)
         self.window.present()
         if self.layout_check and not self._layout_check_scheduled:
             self._layout_check_scheduled = True
@@ -60,19 +64,15 @@ class BC250Application(Gtk.Application):
             height = self.window.get_height()
             content_width = content.get_width()
             content_height = content.get_height()
+            content_outer_width = content_width + content.get_margin_start() + content.get_margin_end()
+            content_outer_height = content_height + content.get_margin_top() + content.get_margin_bottom()
             minimum, natural, _minimum_baseline, _natural_baseline = content.measure(
                 Gtk.Orientation.VERTICAL,
-                content_width,
+                content_outer_width,
             )
-            self.layout_ok = natural <= content_height
-            print(
-                f"Layout: window={width}x{height}, "
-                f"content={content_width}x{content_height}, "
-                f"content-minimum={minimum}, content-natural={natural}, "
-                f"fits={'yes' if self.layout_ok else 'no'}",
-                flush=True,
-            )
+            child_layouts = []
             child = content.get_first_child()
+            horizontal_fits = True
             index = 0
             while child is not None:
                 child_min_h, child_nat_h, _min_base, _nat_base = child.measure(
@@ -83,14 +83,39 @@ class BC250Application(Gtk.Application):
                     Gtk.Orientation.HORIZONTAL,
                     -1,
                 )
+                horizontal_fits = horizontal_fits and child_min_w <= child.get_width()
+                child_layouts.append((
+                    index,
+                    child,
+                    child_min_w,
+                    child_nat_w,
+                    child_min_h,
+                    child_nat_h,
+                ))
+                child = child.get_next_sibling()
+                index += 1
+            self.layout_ok = (
+                width <= 520
+                and height <= 700
+                and natural <= content_outer_height
+                and horizontal_fits
+            )
+            print(
+                f"Layout: window={width}x{height}, "
+                f"content={content_width}x{content_height}, "
+                f"content-outer={content_outer_width}x{content_outer_height}, "
+                f"content-minimum={minimum}, content-natural={natural}, "
+                f"horizontal-fits={'yes' if horizontal_fits else 'no'}, "
+                f"fits={'yes' if self.layout_ok else 'no'}",
+                flush=True,
+            )
+            for index, child, child_min_w, child_nat_w, child_min_h, child_nat_h in child_layouts:
                 print(
                     f"Layout child[{index}]: classes={','.join(child.get_css_classes()) or '-'}, "
                     f"allocated={child.get_width()}x{child.get_height()}, "
                     f"width={child_min_w}/{child_nat_w}, height={child_min_h}/{child_nat_h}",
                     flush=True,
                 )
-                child = child.get_next_sibling()
-                index += 1
         self.quit()
         return GLib.SOURCE_REMOVE
 

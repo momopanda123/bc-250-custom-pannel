@@ -3,6 +3,14 @@ from pathlib import Path
 
 
 class ScriptAndReadmeTests(unittest.TestCase):
+    def test_cu_manager_exposes_exact_masks_with_readback_state_and_cpu_mask_probe(self):
+        text = Path("vendor/bin/bc250-cu-live-manager").read_text(encoding="utf-8")
+        self.assertIn("apply-masks", text)
+        self.assertIn("requested_masks", text)
+        self.assertIn("actual_masks", text)
+        self.assertIn("/run/bc250-custom-pannel/cu-state.json", text)
+        self.assertIn("cpu-mask", text)
+
     def test_scripts_are_clone_location_independent(self):
         for name in ("run.sh", "install-app.sh", "uninstall-app.sh"):
             with self.subTest(name=name):

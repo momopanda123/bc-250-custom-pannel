@@ -92,7 +92,7 @@ class InstallTests(unittest.TestCase):
                 ["systemctl", "enable", "cyan-skillfish-governor-smu.service"],
                 ["systemctl", "restart", "cyan-skillfish-governor-smu.service"],
                 ["systemctl", "enable", "bc250-cu-live-manager.service"],
-                ["systemctl", "enable", "--now", "bc250-cpu-mode.service"],
+                ["systemctl", "enable", "bc250-cpu-mode.service"],
             ],
         )
 
@@ -269,6 +269,11 @@ voltage = 990
         unit = Path("vendor/templates/bc250-cu-live-manager.service").read_text(encoding="utf-8")
         self.assertIn("Environment=UMR=/opt/bc250-custom-pannel/bin/umr", unit)
 
+    def test_cpu_mode_service_runs_boot_recovery_without_starting_during_install(self):
+        unit = Path("vendor/templates/bc250-cpu-mode.service").read_text(encoding="utf-8")
+        self.assertIn("apply-cpu-mode --boot", unit)
+        self.assertNotIn(["systemctl", "enable", "--now", "bc250-cpu-mode.service"], service_commands())
+
     def test_production_install_materializes_every_declared_system_file(self):
         project = Path(__file__).resolve().parents[1]
         result = install_bundle(project, self.root, manage_services=False)
@@ -297,6 +302,9 @@ voltage = 990
                 self.assertTrue(destination.is_file())
                 if os.name != "nt":
                     self.assertEqual(destination.stat().st_mode & 0o777, int(mode, 8))
+        receipt = Path(result["receipt"])
+        self.assertTrue(receipt.is_file())
+        self.assertEqual(receipt.stat().st_mode & 0o777, 0o644)
 
     def test_install_and_cpu_mode_are_one_root_transaction(self):
         self.assertTrue(

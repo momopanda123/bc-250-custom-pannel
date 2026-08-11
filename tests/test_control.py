@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 from bc250.control import CommandResult, GovernorController, PrivilegedRunner
+from bc250.settings import DraftSettings
 
 
 class ControlTests(unittest.TestCase):
@@ -108,8 +109,8 @@ class ControlTests(unittest.TestCase):
         result = GovernorController(runner=runner).apply_runtime("eco", 85, 75)
         self.assertTrue(result.ok)
         self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0][-5:], ["uuuu", "500", "1500", "85", "75"])
-        self.assertEqual(calls[0][-6], "SetTuning")
+        self.assertEqual(calls[0][-6:], ["uuuuu", "500", "1500", "900", "85", "75"])
+        self.assertEqual(calls[0][-7], "SetTuningWithVoltage")
 
     def test_custom_runtime_apply_uses_user_frequency_range(self):
         calls = []
@@ -120,12 +121,35 @@ class ControlTests(unittest.TestCase):
 
         controller = GovernorController(runner=runner)
         self.assertTrue(hasattr(controller, "apply_custom"), "apply_custom is missing")
-        result = controller.apply_custom(0, 4_294_967_295, 255, 255)
+        result = controller.apply_custom(0, 4_294_967_295, 4_294_967_295, 255, 255)
 
         self.assertTrue(result.ok)
         self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0][-5:], ["uuuu", "0", "4294967295", "255", "255"])
-        self.assertEqual(calls[0][-6], "SetTuning")
+        self.assertEqual(calls[0][-6:], ["uuuuu", "0", "4294967295", "4294967295", "255", "255"])
+        self.assertEqual(calls[0][-7], "SetTuningWithVoltage")
+
+    def test_global_apply_uses_one_privileged_request_for_all_hardware_cards(self):
+        calls = []
+
+        def runner(argv):
+            calls.append(argv)
+            payload = {"ok": True, "message_id": "helper.all_applied", "message_args": {}, "message": "ok"}
+            return CommandResult(True, json.dumps(payload), "", 0)
+
+        settings = DraftSettings(
+            500, 1800, 930, 85, 75, True,
+            (0x07, 0x0F, 0x17, 0x1F), 0, 5,
+        )
+        privileged = PrivilegedRunner(Path("/project"), runner=runner)
+
+        command, payload = privileged.apply_all(settings, persist=True)
+
+        self.assertTrue(command.ok)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][:4], ["pkexec", "python3", str(privileged.project_root / "bc250_privileged.py"), "apply-all"])
+        self.assertEqual(calls[0][-2:], ["--persist", "on"])
+        self.assertIn("0x07,0x0f,0x17,0x1f", calls[0])
 
     def test_custom_persistent_settings_use_narrow_helper_arguments(self):
         calls = []

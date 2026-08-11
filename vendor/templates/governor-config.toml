@@ -9,6 +9,7 @@ flush-every = 10
 
 [gpu]
 set-method = "smu"
+voltage-limit = 930
 
 [dbus]
 enabled = true

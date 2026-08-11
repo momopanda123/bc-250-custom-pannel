@@ -1,0 +1,294 @@
+diff -ruN '--exclude=target' '--exclude=bc250.1.patch' cyan-governor-v1/Cargo.lock cyan-governor-red/Cargo.lock
+--- cyan-governor-v1/Cargo.lock	2026-08-11 22:10:16.033829315 +0900
++++ cyan-governor-red/Cargo.lock	2026-08-11 21:41:48.445592425 +0900
+@@ -314,7 +314,7 @@
+
+ [[package]]
+ name = "cyan-skillfish-governor-smu"
+-version = "0.4.11-bc250.1"
++version = "0.4.11-bc250.2"
+ dependencies = [
+  "clap",
+  "clap-verbosity-flag",
+diff -ruN '--exclude=target' '--exclude=bc250.1.patch' cyan-governor-v1/Cargo.toml cyan-governor-red/Cargo.toml
+--- cyan-governor-v1/Cargo.toml	2026-08-11 22:10:16.033592220 +0900
++++ cyan-governor-red/Cargo.toml	2026-08-11 21:41:48.379592090 +0900
+@@ -1,6 +1,6 @@
+ [package]
+ name = "cyan-skillfish-governor-smu"
+-version = "0.4.11-bc250.1"
++version = "0.4.11-bc250.2"
+ license = "MIT"
+ edition = "2024"
+ build = "build.rs"
+diff -ruN '--exclude=target' '--exclude=bc250.1.patch' cyan-governor-v1/src/config.rs cyan-governor-red/src/config.rs
+--- cyan-governor-v1/src/config.rs	2026-08-11 22:10:16.034177115 +0900
++++ cyan-governor-red/src/config.rs	2026-08-11 21:41:58.673644443 +0900
+@@ -83,6 +83,7 @@
+
+ pub struct GpuConfig {
+     pub set_method: GpuSetMethod,
++    pub voltage_limit_mv: u32,
+ }
+
+ pub struct DbusConfig {
+@@ -124,6 +125,7 @@
+             gpu_usage: parse_gpu_usage_config(&config),
+             gpu: GpuConfig {
+                 set_method: parse_gpu_set_method(&config),
++                voltage_limit_mv: parse_gpu_voltage_limit(&config),
+             },
+             dbus: parse_dbus_config(&config),
+             frequency_range: parse_frequency_range_config(&config),
+@@ -510,6 +512,20 @@
+     }
+ }
+
++fn parse_gpu_voltage_limit(config: &Table) -> u32 {
++    let gpu_section = config.get("gpu").and_then(|t| t.as_table());
++
++    parse_integer_in_range_optional(
++        gpu_section,
++        "voltage-limit",
++        "gpu.voltage-limit",
++        0..=i64::from(u32::MAX),
++        Some(0),
++        Some(0),
++    )
++    .unwrap_or(0) as u32
++}
++
+ fn parse_dbus_config(config: &Table) -> DbusConfig {
+     let dbus = config.get("dbus").and_then(|t| t.as_table());
+
+@@ -977,4 +993,18 @@
+         assert_eq!(config.gpu_usage.flush_every, 7);
+         assert!(matches!(config.gpu_usage.method, GpuUsageMethod::Process));
+     }
++
++    #[test]
++    fn gpu_voltage_limit_defaults_to_base_curve_and_reads_full_u32_value() {
++        let default_config = parse_config("");
++        assert_eq!(default_config.gpu.voltage_limit_mv, 0);
++
++        let configured = parse_config(
++            r#"
++            [gpu]
++            voltage-limit = 4294967295
++            "#,
++        );
++        assert_eq!(configured.gpu.voltage_limit_mv, u32::MAX);
++    }
+ }
+diff -ruN '--exclude=target' '--exclude=bc250.1.patch' cyan-governor-v1/src/dbus.rs cyan-governor-red/src/dbus.rs
+--- cyan-governor-v1/src/dbus.rs	2026-08-11 22:10:16.034435116 +0900
++++ cyan-governor-red/src/dbus.rs	2026-08-11 21:41:58.789645033 +0900
+@@ -96,6 +96,37 @@
+         Ok(())
+     }
+
++    fn set_tuning_with_voltage(
++        &self,
++        min: u32,
++        max: u32,
++        voltage_limit_mv: u32,
++        throttling: u32,
++        recovery: u32,
++    ) -> fdo::Result<()> {
++        let mut gov = self
++            .state
++            .lock()
++            .map_err(|_| fdo::Error::Failed("state lock poisoned".into()))?;
++        gov.apply_tuning_with_voltage_command(
++            min,
++            max,
++            voltage_limit_mv,
++            throttling,
++            recovery,
++        )
++        .map_err(|err| fdo::Error::InvalidArgs(err.to_string()))?;
++        Ok(())
++    }
++
++    #[zbus(property)]
++    fn voltage_limit(&self) -> u32 {
++        self.state
++            .lock()
++            .map(|state| state.voltage_limit())
++            .unwrap_or(0)
++    }
++
+     fn set_parameters(
+         &self,
+         min_freq: u32,
+diff -ruN '--exclude=target' '--exclude=bc250.1.patch' cyan-governor-v1/src/governor.rs cyan-governor-red/src/governor.rs
+--- cyan-governor-v1/src/governor.rs	2026-08-11 22:10:16.034718839 +0900
++++ cyan-governor-red/src/governor.rs	2026-08-11 21:41:58.775644962 +0900
+@@ -297,6 +297,23 @@
+         throttling: u32,
+         recovery: u32,
+     ) -> Result<()> {
++        self.apply_tuning_with_voltage_command(
++            min,
++            max,
++            self.gpu.voltage_limit(),
++            throttling,
++            recovery,
++        )
++    }
++
++    pub fn apply_tuning_with_voltage_command(
++        &mut self,
++        min: u32,
++        max: u32,
++        voltage_limit_mv: u32,
++        throttling: u32,
++        recovery: u32,
++    ) -> Result<()> {
+         let requested_range = resolve_range(
+             &self.params.allowed_frequency_range,
+             &self.startup_initial_range,
+@@ -311,13 +328,16 @@
+         self.requested_range = requested_range;
+         self.params.temperature.throttling_temp = throttling_temp;
+         self.params.temperature.throttling_recovery_temp = recovery_temp;
++        self.gpu.set_voltage_limit(voltage_limit_mv);
++        self.curr_freq = 0;
+         if self.max_freq > *self.requested_range.end() {
+             self.max_freq = *self.requested_range.end();
+         }
+         info!(
+-            "Tuning updated atomically: range={}..={} MHz, throttling={}C, recovery={}C",
++            "Tuning updated atomically: range={}..={} MHz, voltage limit={} mV, throttling={}C, recovery={}C",
+             self.requested_range.start(),
+             self.requested_range.end(),
++            self.gpu.voltage_limit(),
+             self.params.temperature.throttling_temp.unwrap_or(0),
+             self.params
+                 .temperature
+@@ -327,6 +347,10 @@
+         Ok(())
+     }
+
++    pub fn voltage_limit(&self) -> u32 {
++        self.gpu.voltage_limit()
++    }
++
+     pub fn apply_test_mode_command(&mut self, frequency: u32, voltage: u32) -> Result<()> {
+         self.gpu.change_freq_vol(frequency, voltage)?;
+         self.test_mode = true;
+diff -ruN '--exclude=target' '--exclude=bc250.1.patch' cyan-governor-v1/src/gpu.rs cyan-governor-red/src/gpu.rs
+--- cyan-governor-v1/src/gpu.rs	2026-08-11 22:09:55.826244130 +0900
++++ cyan-governor-red/src/gpu.rs	2026-08-11 21:41:58.686644510 +0900
+@@ -36,6 +36,7 @@
+     freq_strategy: Box<dyn FreqStrategy + Send>,
+     usage_strategy: Box<dyn UsageStrategy + Send>,
+     safe_points: BTreeMap<u32, u32>,
++    voltage_limit_mv: u32,
+     location: BUS_INFO,
+ }
+
+@@ -45,6 +46,7 @@
+         gpu_set_method: GpuSetMethod,
+         gpu_usage_method: GpuUsageMethod,
+         sampling_interval: Duration,
++        voltage_limit_mv: u32,
+     ) -> Result<GPU> {
+         let location = BUS_INFO {
+             domain: 0,
+@@ -93,6 +95,7 @@
+             freq_strategy,
+             usage_strategy,
+             safe_points,
++            voltage_limit_mv,
+             location,
+         })
+     }
+@@ -114,10 +117,18 @@
+     }
+
+     pub fn change_freq(&mut self, freq: u32) -> Result<()> {
+-        let vol = voltage_for_freq(&self.safe_points, freq)?;
++        let vol = voltage_for_freq_with_limit(&self.safe_points, freq, self.voltage_limit_mv)?;
+         self.freq_strategy.change_freq(freq, vol)
+     }
+
++    pub fn set_voltage_limit(&mut self, voltage_limit_mv: u32) {
++        self.voltage_limit_mv = voltage_limit_mv;
++    }
++
++    pub fn voltage_limit(&self) -> u32 {
++        self.voltage_limit_mv
++    }
++
+     pub fn change_freq_vol(&mut self, freq: u32, vol: u32) -> Result<()> {
+         self.freq_strategy.change_freq(freq, vol)
+     }
+@@ -163,6 +174,19 @@
+     Err(IoError::other("tried to set a frequency beyond max safe point").into())
+ }
+
++fn voltage_for_freq_with_limit(
++    safe_points: &BTreeMap<u32, u32>,
++    freq: u32,
++    voltage_limit_mv: u32,
++) -> Result<u32> {
++    let base_voltage = voltage_for_freq(safe_points, freq)?;
++    Ok(if voltage_limit_mv == 0 {
++        base_voltage
++    } else {
++        base_voltage.min(voltage_limit_mv)
++    })
++}
++
+ const EXPECTED_VENDOR_ID: &str = "0x1002";
+ const EXPECTED_DEVICE_ID: &str = "0x13fe";
+ fn validate_device_identity(location: &BUS_INFO) -> Result<()> {
+@@ -263,7 +287,7 @@
+
+ #[cfg(test)]
+ mod tests {
+-    use super::voltage_for_freq;
++    use super::{voltage_for_freq, voltage_for_freq_with_limit};
+     use std::collections::BTreeMap;
+
+     #[test]
+@@ -292,4 +316,28 @@
+
+         assert!(voltage_for_freq(&safe_points, 1100).is_err());
+     }
++
++    #[test]
++    fn voltage_limit_caps_interpolated_and_exact_safe_point_values() {
++        let safe_points = BTreeMap::from([(800, 700), (950, 850), (1000, 900)]);
++
++        assert_eq!(
++            voltage_for_freq_with_limit(&safe_points, 900, 775).unwrap(),
++            775
++        );
++        assert_eq!(
++            voltage_for_freq_with_limit(&safe_points, 950, 800).unwrap(),
++            800
++        );
++    }
++
++    #[test]
++    fn zero_voltage_limit_preserves_the_base_curve() {
++        let safe_points = BTreeMap::from([(800, 700), (950, 850), (1000, 900)]);
++
++        assert_eq!(
++            voltage_for_freq_with_limit(&safe_points, 900, 0).unwrap(),
++            800
++        );
++    }
+ }
+diff -ruN '--exclude=target' '--exclude=bc250.1.patch' cyan-governor-v1/src/main.rs cyan-governor-red/src/main.rs
+--- cyan-governor-v1/src/main.rs	2026-08-11 22:09:55.853244269 +0900
++++ cyan-governor-red/src/main.rs	2026-08-11 21:41:58.885281561 +0900
+@@ -48,6 +48,7 @@
+         config.gpu.set_method,
+         config.gpu_usage.method,
+         config.timing.sampling_interval,
++        config.gpu.voltage_limit_mv,
+     )?;
+     let params: GovernorParams = config.to_governor_params(&gpu);

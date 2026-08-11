@@ -13,6 +13,12 @@ from typing import Callable, Sequence
 from .messages import UserMessage
 
 
+INSTALL_RECEIPT_PATH = "/opt/bc250-custom-pannel/install-receipt.json"
+INSTALL_RECEIPT_SCHEMA = 1
+RECEIPT_ONLY_INSTALL_PATHS = frozenset({
+    "/etc/polkit-1/rules.d/49-bc250-custom-pannel.rules",
+})
+
 
 @dataclass(frozen=True, slots=True)
 class BundleReport:
@@ -119,6 +125,28 @@ def installed_component_matches(
     return digest == str(component.get("sha256", "")).lower()
 
 
+def load_install_receipt(system_root: Path = Path("/")) -> dict[str, str]:
+    system_root = Path(system_root)
+    path = system_root / INSTALL_RECEIPT_PATH.lstrip("/")
+    try:
+        file_stat = path.stat()
+        if file_stat.st_mode & 0o022:
+            return {}
+        if system_root.resolve() == Path("/") and file_stat.st_uid != 0:
+            return {}
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    components = payload.get("components")
+    if payload.get("schema") != INSTALL_RECEIPT_SCHEMA or not isinstance(components, dict):
+        return {}
+    if not all(isinstance(key, str) and isinstance(value, str) for key, value in components.items()):
+        return {}
+    return {key: value.lower() for key, value in components.items()}
+
+
 def _read_os_release() -> str:
     for path in (Path("/etc/os-release"), Path("/usr/lib/os-release")):
         try:
@@ -193,12 +221,17 @@ def inspect(
         for component in components
         if component.get("install_path")
     }
+    install_receipt = load_install_receipt(system_root)
 
     def compatible(install_path: str) -> bool:
         component = by_install_path.get(install_path)
+        if not component:
+            return False
+        if installed_component_matches(project_root, component, system_root):
+            return True
         return bool(
-            component
-            and installed_component_matches(project_root, component, system_root)
+            install_path in RECEIPT_ONLY_INSTALL_PATHS
+            and install_receipt.get(install_path) == str(component.get("sha256", "")).lower()
         )
 
     def installed(install_path: str) -> bool:

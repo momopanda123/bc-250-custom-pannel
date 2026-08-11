@@ -6,7 +6,7 @@ ConditionPathExists=/usr/local/libexec/bc250-custom-pannel-privileged
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/libexec/bc250-custom-pannel-privileged apply-cpu-mode
+ExecStart=/usr/local/libexec/bc250-custom-pannel-privileged apply-cpu-mode --boot
 RemainAfterExit=yes
 
 [Install]

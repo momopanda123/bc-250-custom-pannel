@@ -9,12 +9,15 @@ from bc250.messages import MessageError, UserMessage
 REQUIRED_KEYS = {
     "app.title", "app.subtitle", "app.hero_caption",
     "language.auto", "language.ko", "language.en", "language.ja", "language.zh_CN",
-    "common.unavailable", "common.cancel", "common.continue", "common.close", "common.active",
+    "common.unavailable", "common.cancel", "common.continue", "common.close", "common.active", "common.on", "common.off",
     "common.stopped_or_disconnected", "common.just_now", "common.details_missing",
     "status.checking", "status.normal", "status.needs_attention", "status.partial", "status.error",
-    "status.cu_applied", "status.cu_mismatch", "status.cu_saved", "status.updated_at",
-    "status.cpu_stock", "status.cpu_unlocked", "status.cpu_pending",
-    "setup.title", "setup.detail", "setup.install", "setup.required", "setup.ready",
+    "status.cu_applied", "status.cu_mismatch", "status.cu_saved", "status.cu_selection",
+    "status.cu_selection_pending",
+    "status.cu_selection_unknown", "wgp.tooltip", "wgp.base_fixed",
+    "status.cpu_stock", "status.cpu_unlocked", "status.cpu_pending", "status.cpu_recovery_failed",
+    "status.cpu_saved_unlock_mismatch",
+    "setup.title", "setup.detail", "setup.install", "setup.required", "setup.ready", "setup.installed",
     "component.governor", "component.cu_manager", "component.umr", "component.helper", "component.cpu_mode", "component.support",
     "metric.gpu_temperature", "metric.cpu_temperature", "metric.power", "metric.clock",
     "metric.voltage", "metric.fan", "metric.driver_report", "metric.edge_sensor",
@@ -25,13 +28,14 @@ REQUIRED_KEYS = {
     "section.control_subtitle", "field.bios_vendor", "field.bios_version", "field.bios_date",
     "field.kernel", "field.architecture", "field.governor", "field.performance_preset",
     "field.throttle", "field.recovery", "field.next_boot_cu", "field.cpu_cores",
-    "field.gpu_cu", "field.custom_min_clock", "field.custom_max_clock",
+    "field.gpu_cu", "field.custom_min_clock", "field.custom_max_clock", "field.voltage_limit",
     "action.unlock_cpu", "action.enable_cpu", "action.disable_cpu", "action.apply_now",
     "action.apply_and_save", "action.save_boot_profile", "preset.eco", "preset.eco_detail",
     "preset.balanced", "preset.balanced_detail", "preset.performance", "preset.performance_detail",
     "preset.custom", "preset.custom_detail",
     "cu.24", "cu.32", "cu.40", "dialog.operation_failed", "dialog.input_check",
     "dialog.apply_complete", "dialog.apply_complete_detail", "dialog.apply_failed",
+    "dialog.reboot_required", "dialog.reboot_required_detail",
     "dialog.save_confirm", "dialog.save_confirm_detail", "dialog.cu_confirm",
     "dialog.cu_confirm_detail", "dialog.cpu_unlock_confirm", "dialog.cpu_unlock_confirm_detail",
     "dialog.cpu_unlock_complete", "dialog.cpu_unlock_failed", "dialog.cpu_enable_confirm",
@@ -40,7 +44,8 @@ REQUIRED_KEYS = {
     "dialog.cancelled", "dialog.auth_cancelled",
     "dialog.save_complete", "dialog.save_failed", "dialog.install_confirm",
     "dialog.install_confirm_detail", "dialog.install_complete", "dialog.install_failed",
-    "error.no_response", "error.invalid_preset", "error.invalid_cu", "error.invalid_frequency_range",
+    "error.no_response", "error.invalid_preset", "error.invalid_cu", "error.invalid_cu_masks",
+    "error.base_cu_required", "error.invalid_voltage", "error.invalid_power_timeout", "error.invalid_frequency_range",
     "error.invalid_throttle", "error.invalid_recovery_gap", "error.cu_mismatch",
     "error.amdgpu_missing", "error.locale_save", "error.bundle_invalid",
     "platform.not_bazzite", "platform.arch_unsupported", "platform.device_missing",
@@ -48,7 +53,8 @@ REQUIRED_KEYS = {
     "install.complete", "install.remove_complete", "helper.governor_saved",
     "helper.governor_restart_failed", "helper.cu_saved", "helper.cpu_unlock_armed",
     "helper.cpu_unlock_failed", "helper.cpu_mode_enabled", "helper.cpu_mode_disabled", "helper.backup_restored",
-    "helper.auth_required", "helper.action_invalid",
+    "helper.auth_required", "helper.action_invalid", "helper.all_applied", "helper.all_saved",
+    "helper.governor_apply_failed", "helper.cu_apply_failed",
 }
 
 
@@ -174,6 +180,87 @@ class I18nTests(unittest.TestCase):
             "Current {current}/40 · saved profile differs",
         )
         self.assertNotIn("쨌", catalog["status.cu_mismatch"])
+
+    def test_cpu_status_copy_does_not_repeat_the_topology_value(self):
+        keys = (
+            "status.cpu_stock",
+            "status.cpu_unlocked",
+            "status.cpu_pending",
+            "status.cpu_recovery_failed",
+            "status.cpu_saved_unlock_mismatch",
+        )
+        for language in SUPPORTED_LANGUAGES[1:]:
+            catalog = json.loads(
+                (Path("bc250/locales") / f"{language}.json").read_text(encoding="utf-8")
+            )
+            for key in keys:
+                with self.subTest(language=language, key=key):
+                    self.assertNotRegex(catalog[key], r"\d+\s*C\s*/\s*\d+\s*T")
+
+    def test_cu_summary_states_enabled_count_out_of_the_full_40(self):
+        expected = {
+            "en": "{live} / 40 CU enabled",
+            "ko": "{live} / 40 CU 활성화",
+            "ja": "{live} / 40 CU 有効",
+            "zh-CN": "{live} / 40 CU 已启用",
+        }
+        for language, value in expected.items():
+            catalog = json.loads(
+                (Path("bc250/locales") / f"{language}.json").read_text(encoding="utf-8")
+            )
+            with self.subTest(language=language):
+                self.assertEqual(catalog["status.cu_selection"], value)
+                self.assertNotIn("Target", catalog["status.cu_selection"])
+
+    def test_global_actions_use_short_apply_and_save_labels(self):
+        expected = {
+            "en": ("Apply", "Save"),
+            "ko": ("적용", "저장"),
+            "ja": ("適用", "保存"),
+            "zh-CN": ("应用", "保存"),
+        }
+        for language, values in expected.items():
+            catalog = json.loads(
+                (Path("bc250/locales") / f"{language}.json").read_text(encoding="utf-8")
+            )
+            with self.subTest(language=language):
+                self.assertEqual(
+                    (catalog["action.apply_now"], catalog["action.apply_and_save"]),
+                    values,
+                )
+
+    def test_power_copy_uses_plain_sleep_terms(self):
+        expected = {
+            "en": ("Hardware power saving: On", "System sleep", "Screen off", "Never"),
+            "ko": ("하드웨어 절전: 켜짐", "시스템 절전", "화면 꺼짐", "사용 안 함"),
+            "ja": ("ハードウェア省電力: オン", "システムスリープ", "画面オフ", "なし"),
+            "zh-CN": ("硬件节能：开启", "系统睡眠", "关闭屏幕", "从不"),
+        }
+        keys = (
+            "power.hardware_idle",
+            "power.suspend_block",
+            "power.display_block",
+            "power.blocked",
+        )
+        for language, values in expected.items():
+            catalog = json.loads(
+                (Path("bc250/locales") / f"{language}.json").read_text(encoding="utf-8")
+            )
+            with self.subTest(language=language):
+                self.assertEqual(tuple(catalog[key] for key in keys), values)
+
+        titles = {
+            "en": "POWER & SLEEP",
+            "ko": "전원 및 절전",
+            "ja": "電源とスリープ",
+            "zh-CN": "电源与睡眠",
+        }
+        for language, value in titles.items():
+            catalog = json.loads(
+                (Path("bc250/locales") / f"{language}.json").read_text(encoding="utf-8")
+            )
+            with self.subTest(language=language, field="title"):
+                self.assertEqual(catalog["section.power_idle"], value)
 
     def test_close_action_has_natural_translations(self):
         expected = {"en": "Close", "ko": "닫기", "ja": "閉じる", "zh-CN": "关闭"}

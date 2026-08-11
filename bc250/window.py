@@ -10,7 +10,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import GLib, Gtk
 
 from .bootstrap import inspect
-from .control import CommandResult, GovernorController, PrivilegedRunner
+from .control import PrivilegedRunner
 from .i18n import Translator
 from .messages import MessageError, UserMessage
 from .power import PowerController, PowerState
@@ -22,11 +22,12 @@ from .presets import (
     validate_temperature,
 )
 from .status import UNKNOWN, FanReading, StatusCollector, StatusSnapshot, SystemInfo
+from .settings import BASE_WGP_MASK, DraftSettings
 
 
 class MetricCard(Gtk.Box):
     def __init__(self, title: str = "", value: str = UNKNOWN, detail: str = "") -> None:
-        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=1)
         self.add_css_class("telemetry-cell")
         self.set_hexpand(True)
 
@@ -66,7 +67,6 @@ class InfoRow(Gtk.Box):
 class MainWindow(Gtk.ApplicationWindow):
     LANGUAGE_CODES = ("auto", "ko", "en", "ja", "zh-CN")
     PRESET_KEYS = (*PRESETS.keys(), "custom")
-    CU_VALUES = (24, 32, 40)
     POWER_PRESET_MINUTES = (0, 5, 10, 15, 30, 60)
 
     def __init__(
@@ -81,7 +81,6 @@ class MainWindow(Gtk.ApplicationWindow):
         self.translator = translator
         self.demo = demo
         self.collector = StatusCollector()
-        self.controller = GovernorController()
         self.power_controller = PowerController()
         self.privileged = PrivilegedRunner(self.project_root)
         self._alive = True
@@ -96,11 +95,13 @@ class MainWindow(Gtk.ApplicationWindow):
         self._cpu_mode_eligible = False
         self._cpu_mode_pending = False
         self._cpu_mode_target = False
+        self._cpu_draft_changed = False
         self._settings_hydrated = False
+        self._draft_dirty = False
         self._last_snapshot: StatusSnapshot | None = None
         self._last_power_state: PowerState | None = None
-        self.set_default_size(600, 700)
-        self.set_size_request(560, 650)
+        self.set_default_size(520, -1)
+        self.set_size_request(500, -1)
         self.connect("close-request", self._on_close)
         self._build_ui()
         self._retranslate()
@@ -115,66 +116,96 @@ class MainWindow(Gtk.ApplicationWindow):
         self.app_title.set_ellipsize(3)
         header.set_title_widget(self.app_title)
 
-        self.status_badge = Gtk.Label()
-        self.status_badge.add_css_class("status-badge")
-        self.status_badge.add_css_class("status-warn")
-        header.pack_start(self.status_badge)
+        self.set_titlebar(header)
 
+        dashboard = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        dashboard.add_css_class("dashboard")
+        dashboard.set_margin_top(2)
+        dashboard.set_margin_bottom(0)
+        dashboard.set_margin_start(5)
+        dashboard.set_margin_end(5)
+        self.set_child(dashboard)
+
+        hero = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        hero.add_css_class("overview-strip")
+        summary = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.hero_title = Gtk.Label(label="BC-250", xalign=0)
+        self.hero_title.add_css_class("hero-title")
+        self.hero_title.set_hexpand(True)
+        self.hero_title.set_ellipsize(3)
+        summary.append(self.hero_title)
         self.language_dropdown = Gtk.DropDown.new_from_strings(
             ["Auto · System", "한국어", "English", "日本語", "简体中文"]
         )
         self.language_dropdown.add_css_class("language-selector")
         self.language_dropdown.set_selected(self.LANGUAGE_CODES.index(self.translator.language))
+        self.language_dropdown.set_valign(Gtk.Align.CENTER)
         self.language_dropdown.connect("notify::selected", self._on_language_changed)
-        header.pack_end(self.language_dropdown)
-        self.last_update = Gtk.Label()
-        self.last_update.add_css_class("last-update")
-        header.pack_end(self.last_update)
-        self.set_titlebar(header)
+        summary.append(self.language_dropdown)
+        hero.append(summary)
 
-        dashboard = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        dashboard.add_css_class("dashboard")
-        dashboard.set_margin_top(3)
-        dashboard.set_margin_bottom(3)
-        dashboard.set_margin_start(9)
-        dashboard.set_margin_end(9)
-        self.set_child(dashboard)
-
-        hero = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        hero.add_css_class("overview-strip")
-        self.hero_title = Gtk.Label(label="BC-250", xalign=0)
-        self.hero_title.add_css_class("hero-title")
-        self.hero_title.set_hexpand(True)
-        self.hero_title.set_ellipsize(3)
-        hero.append(self.hero_title)
-        self.hero_state = Gtk.Label()
+        hardware = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=3)
+        hardware.add_css_class("overview-system-row")
+        hardware.set_homogeneous(True)
+        status = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+        status.add_css_class("system-cell")
+        status.add_css_class("system-status")
+        status.set_hexpand(True)
+        self.hero_state = Gtk.Label(xalign=0)
         self.hero_state.add_css_class("hero-state")
-        hero.append(self.hero_state)
+        self.hero_state.set_ellipsize(3)
+        self.hero_state.set_valign(Gtk.Align.CENTER)
+        self.hero_state.set_vexpand(True)
+        status.append(self.hero_state)
+        bios = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+        bios.add_css_class("system-cell")
+        bios.add_css_class("system-bios")
+        bios.set_hexpand(True)
+        self.bios_label = Gtk.Label(xalign=0)
+        self.bios_label.add_css_class("field-label")
+        self.bios_value = Gtk.Label(xalign=0, selectable=True)
+        self.bios_value.add_css_class("system-value")
+        self.bios_value.set_ellipsize(3)
+        bios.append(self.bios_label)
+        bios.append(self.bios_value)
+        kernel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+        kernel.add_css_class("system-cell")
+        kernel.add_css_class("system-kernel")
+        kernel.set_hexpand(True)
+        self.kernel_label = Gtk.Label(xalign=0)
+        self.kernel_label.add_css_class("field-label")
+        self.kernel_value = Gtk.Label(xalign=0, selectable=True)
+        self.kernel_value.add_css_class("system-value")
+        self.kernel_value.set_ellipsize(3)
+        kernel.append(self.kernel_label)
+        kernel.append(self.kernel_value)
+        hardware.append(status)
+        hardware.append(bios)
+        hardware.append(kernel)
+        hero.append(hardware)
         dashboard.append(hero)
 
-        self.setup_banner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        self.setup_banner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.setup_banner.add_css_class("setup-banner")
-        setup_text = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        setup_text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         setup_text.set_hexpand(True)
         self.setup_title = Gtk.Label(xalign=0)
         self.setup_title.add_css_class("setup-title")
         self.setup_detail = Gtk.Label(xalign=0)
         self.setup_detail.set_hexpand(True)
-        self.setup_detail.set_ellipsize(3)
+        self.setup_detail.set_wrap(True)
         self.setup_detail.add_css_class("setup-detail")
         setup_text.append(self.setup_title)
         setup_text.append(self.setup_detail)
         self.setup_banner.append(setup_text)
         self.install_button = Gtk.Button()
         self.install_button.add_css_class("primary-action")
+        self.install_button.set_valign(Gtk.Align.CENTER)
         self.install_button.connect("clicked", self._on_install)
         self.setup_banner.append(self.install_button)
         dashboard.append(self.setup_banner)
 
-        telemetry_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        self.telemetry_title = Gtk.Label(xalign=0)
-        self.telemetry_title.add_css_class("eyebrow")
-        telemetry_box.append(self.telemetry_title)
+        telemetry_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         metrics = Gtk.Grid(column_spacing=0, row_spacing=0)
         metrics.add_css_class("telemetry-band")
         metrics.set_column_homogeneous(True)
@@ -209,7 +240,7 @@ class MainWindow(Gtk.ApplicationWindow):
         dashboard.append(self._build_tuning_surface())
         dashboard.append(self._build_core_surface())
         dashboard.append(self._build_power_surface())
-        dashboard.append(self._build_system_strip())
+        dashboard.append(self._build_global_actions())
 
     def _section_header(self) -> tuple[Gtk.Box, Gtk.Label, Gtk.Label]:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
@@ -222,7 +253,7 @@ class MainWindow(Gtk.ApplicationWindow):
         return box, heading, detail
 
     def _build_tuning_surface(self) -> Gtk.Box:
-        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=7)
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         card.add_css_class("tuning-surface")
         title_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self.control_title = Gtk.Label(xalign=0)
@@ -234,10 +265,10 @@ class MainWindow(Gtk.ApplicationWindow):
         title_row.append(self.governor_value)
         card.append(title_row)
 
-        profile_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        profile_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=7)
         self.profile_label = Gtk.Label(xalign=0)
         self.profile_label.add_css_class("field-label")
-        self.profile_label.set_size_request(112, -1)
+        self.profile_label.set_size_request(88, -1)
         self.profile_dropdown = Gtk.DropDown.new_from_strings([])
         self.profile_dropdown.set_selected(2)
         self.profile_dropdown.set_hexpand(True)
@@ -246,12 +277,14 @@ class MainWindow(Gtk.ApplicationWindow):
         profile_row.append(self.profile_dropdown)
         card.append(profile_row)
 
-        settings_grid = Gtk.Grid(column_spacing=8, row_spacing=3)
+        settings_grid = Gtk.Grid(column_spacing=4, row_spacing=1)
         settings_grid.set_column_homogeneous(True)
         self.custom_min_label = Gtk.Label(xalign=0)
         self.custom_min_label.add_css_class("field-label")
         self.custom_max_label = Gtk.Label(xalign=0)
         self.custom_max_label.add_css_class("field-label")
+        self.custom_mv_label = Gtk.Label(xalign=0)
+        self.custom_mv_label.add_css_class("field-label")
         self.throttle_label = Gtk.Label(xalign=0)
         self.throttle_label.add_css_class("field-label")
         self.recovery_label = Gtk.Label(xalign=0)
@@ -260,43 +293,36 @@ class MainWindow(Gtk.ApplicationWindow):
         self.custom_min_spin.set_value(500)
         self.custom_max_spin = Gtk.SpinButton.new_with_range(0, UINT32_MAX, 25)
         self.custom_max_spin.set_value(1800)
+        self.custom_mv_spin = Gtk.SpinButton.new_with_range(0, UINT32_MAX, 5)
+        self.custom_mv_spin.set_value(930)
         self.throttle_spin = Gtk.SpinButton.new_with_range(0, MAX_TEMPERATURE_C, 1)
         self.throttle_spin.set_value(85)
         self.recovery_spin = Gtk.SpinButton.new_with_range(0, MAX_TEMPERATURE_C, 1)
         self.recovery_spin.set_value(75)
-        for column, (label, spin) in enumerate((
-            (self.custom_min_label, self.custom_min_spin),
-            (self.custom_max_label, self.custom_max_spin),
-            (self.throttle_label, self.throttle_spin),
-            (self.recovery_label, self.recovery_spin),
-        )):
-            settings_grid.attach(label, column, 0, 1, 1)
-            settings_grid.attach(spin, column, 1, 1, 1)
+        control_fields = (
+            (self.custom_min_label, self.custom_min_spin, 0, 0),
+            (self.custom_max_label, self.custom_max_spin, 1, 0),
+            (self.custom_mv_label, self.custom_mv_spin, 2, 0),
+            (self.throttle_label, self.throttle_spin, 0, 2),
+            (self.recovery_label, self.recovery_spin, 1, 2),
+        )
+        for label, spin, column, row in control_fields:
+            spin.set_width_chars(7)
+            spin.set_max_width_chars(7)
+            settings_grid.attach(label, column, row, 1, 1)
+            settings_grid.attach(spin, column, row + 1, 1, 1)
         card.append(settings_grid)
 
-        action_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self.apply_button = Gtk.Button()
-        self.apply_button.add_css_class("secondary-action")
-        self.apply_button.set_hexpand(True)
-        self.apply_button.connect("clicked", self._on_apply_runtime)
-        self.save_button = Gtk.Button()
-        self.save_button.add_css_class("primary-action")
-        self.save_button.set_hexpand(True)
-        self.save_button.connect("clicked", self._on_save_persistent)
-        action_row.append(self.apply_button)
-        action_row.append(self.save_button)
-        card.append(action_row)
         return card
 
     def _build_core_surface(self) -> Gtk.Box:
-        surface = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        surface = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
         surface.add_css_class("core-surface")
         self.core_title = Gtk.Label(xalign=0)
         self.core_title.add_css_class("section-title")
         surface.append(self.core_title)
 
         grid = Gtk.Grid(column_spacing=0, row_spacing=0)
-        grid.set_column_homogeneous(True)
         cpu = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
         cpu.add_css_class("core-pane")
         cpu.add_css_class("divider-right")
@@ -304,44 +330,56 @@ class MainWindow(Gtk.ApplicationWindow):
         self.cpu_label.add_css_class("field-label")
         self.cpu_core_value = Gtk.Label(xalign=0)
         self.cpu_core_value.add_css_class("core-value")
-        self.cpu_state_label = Gtk.Label(xalign=0)
-        self.cpu_state_label.add_css_class("core-state")
         self.cpu_mode_toggle = Gtk.ToggleButton()
         self.cpu_mode_toggle.add_css_class("cpu-action")
         self.cpu_mode_toggle.connect("toggled", self._on_cpu_mode_toggled)
         cpu.append(self.cpu_label)
         cpu.append(self.cpu_core_value)
-        cpu.append(self.cpu_state_label)
         cpu.append(self.cpu_mode_toggle)
 
-        gpu = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        gpu = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
         gpu.add_css_class("core-pane")
+        gpu.set_hexpand(True)
         self.gpu_label = Gtk.Label(xalign=0)
         self.gpu_label.add_css_class("field-label")
         self.gpu_core_value = Gtk.Label(xalign=0)
         self.gpu_core_value.add_css_class("core-value")
-        self.cu_state_label = Gtk.Label(xalign=0)
-        self.cu_state_label.add_css_class("core-state")
-        cu_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self.cu_dropdown = Gtk.DropDown.new_from_strings([])
-        self.cu_dropdown.set_selected(2)
-        self.cu_dropdown.set_hexpand(True)
-        cu_row.append(self.cu_dropdown)
-        self.cu_save_button = Gtk.Button()
-        self.cu_save_button.add_css_class("warning-action")
-        self.cu_save_button.connect("clicked", self._on_save_cu)
-        cu_row.append(self.cu_save_button)
+        self.wgp_grid = Gtk.Grid(column_spacing=2, row_spacing=0)
+        self.wgp_grid.add_css_class("wgp-grid")
+        self.wgp_grid.set_hexpand(True)
+        self.wgp_grid.set_column_homogeneous(True)
+        corner = Gtk.Label(label="SE.SH", xalign=0)
+        corner.add_css_class("wgp-header")
+        self.wgp_grid.attach(corner, 0, 0, 1, 1)
+        for wgp in range(5):
+            label = Gtk.Label(label=f"W{wgp}")
+            label.add_css_class("wgp-header")
+            self.wgp_grid.attach(label, wgp + 1, 0, 1, 1)
+        self.wgp_buttons = {}
+        for row, name in enumerate(("0.0", "0.1", "1.0", "1.1")):
+            label = Gtk.Label(label=name, xalign=0)
+            label.add_css_class("wgp-row-label")
+            self.wgp_grid.attach(label, 0, row + 1, 1, 1)
+            for wgp in range(5):
+                button = Gtk.CheckButton()
+                button.add_css_class("wgp-cell")
+                button.set_halign(Gtk.Align.CENTER)
+                button.set_valign(Gtk.Align.CENTER)
+                button.set_active(wgp < 3)
+                button.set_sensitive(wgp >= 3)
+                button.connect("toggled", self._on_wgp_toggled)
+                self.wgp_buttons[(row, wgp)] = button
+                self.wgp_grid.attach(button, wgp + 1, row + 1, 1, 1)
         gpu.append(self.gpu_label)
         gpu.append(self.gpu_core_value)
-        gpu.append(self.cu_state_label)
-        gpu.append(cu_row)
+        gpu.append(self.wgp_grid)
         grid.attach(cpu, 0, 0, 1, 1)
         grid.attach(gpu, 1, 0, 1, 1)
         surface.append(grid)
         return surface
 
     def _build_power_surface(self) -> Gtk.Box:
-        surface = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        surface = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         surface.add_css_class("power-surface")
 
         identity = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
@@ -362,7 +400,7 @@ class MainWindow(Gtk.ApplicationWindow):
         self.power_suspend_label.add_css_class("field-label")
         self.power_suspend_dropdown = Gtk.DropDown.new_from_strings([])
         self.power_suspend_dropdown.add_css_class("power-dropdown")
-        self.power_suspend_dropdown.set_size_request(108, -1)
+        self.power_suspend_dropdown.set_size_request(96, -1)
         self.power_suspend_custom_spin = Gtk.SpinButton.new_with_range(1, 240, 1)
         self.power_suspend_custom_spin.set_value(15)
         self.power_suspend_custom_spin.set_width_chars(3)
@@ -377,7 +415,7 @@ class MainWindow(Gtk.ApplicationWindow):
         self.power_display_label.add_css_class("field-label")
         self.power_display_dropdown = Gtk.DropDown.new_from_strings([])
         self.power_display_dropdown.add_css_class("power-dropdown")
-        self.power_display_dropdown.set_size_request(108, -1)
+        self.power_display_dropdown.set_size_request(96, -1)
         self.power_display_custom_spin = Gtk.SpinButton.new_with_range(1, 240, 1)
         self.power_display_custom_spin.set_value(5)
         self.power_display_custom_spin.set_width_chars(3)
@@ -395,31 +433,20 @@ class MainWindow(Gtk.ApplicationWindow):
         surface.append(controls)
         return surface
 
-    def _build_system_strip(self) -> Gtk.Box:
-        strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        strip.add_css_class("system-strip")
-        bios = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
-        bios.add_css_class("system-cell")
-        bios.add_css_class("divider-right")
-        self.bios_label = Gtk.Label(xalign=0)
-        self.bios_label.add_css_class("field-label")
-        self.bios_value = Gtk.Label(xalign=0, selectable=True)
-        self.bios_value.add_css_class("system-value")
-        self.bios_value.set_ellipsize(3)
-        bios.append(self.bios_label)
-        bios.append(self.bios_value)
-        kernel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
-        kernel.add_css_class("system-cell")
-        self.kernel_label = Gtk.Label(xalign=0)
-        self.kernel_label.add_css_class("field-label")
-        self.kernel_value = Gtk.Label(xalign=0, selectable=True)
-        self.kernel_value.add_css_class("system-value")
-        self.kernel_value.set_ellipsize(3)
-        kernel.append(self.kernel_label)
-        kernel.append(self.kernel_value)
-        strip.append(bios)
-        strip.append(kernel)
-        return strip
+    def _build_global_actions(self) -> Gtk.Box:
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        actions.add_css_class("global-actions")
+        self.apply_button = Gtk.Button()
+        self.apply_button.add_css_class("secondary-action")
+        self.apply_button.set_hexpand(True)
+        self.apply_button.connect("clicked", self._on_apply_runtime)
+        self.save_button = Gtk.Button()
+        self.save_button.add_css_class("primary-action")
+        self.save_button.set_hexpand(True)
+        self.save_button.connect("clicked", self._on_save_persistent)
+        actions.append(self.apply_button)
+        actions.append(self.save_button)
+        return actions
 
     def _on_language_changed(self, dropdown, _param) -> None:
         if self._changing_language:
@@ -470,13 +497,10 @@ class MainWindow(Gtk.ApplicationWindow):
 
     def _retranslate(self) -> None:
         preset_index = self.profile_dropdown.get_selected()
-        cu_index = self.cu_dropdown.get_selected()
         power_suspend_index = self.power_suspend_dropdown.get_selected()
         power_display_index = self.power_display_dropdown.get_selected()
         if preset_index >= len(self.PRESET_KEYS):
             preset_index = 2
-        if cu_index >= len(self.CU_VALUES):
-            cu_index = 2
         if power_suspend_index > len(self.POWER_PRESET_MINUTES):
             power_suspend_index = self.POWER_PRESET_MINUTES.index(15)
         if power_display_index > len(self.POWER_PRESET_MINUTES):
@@ -486,8 +510,6 @@ class MainWindow(Gtk.ApplicationWindow):
         self.app_title.set_text(self.translator.gettext("app.title"))
         self.setup_title.set_text(self.translator.gettext("setup.title"))
         self.install_button.set_label(self.translator.gettext("setup.install"))
-        self.telemetry_title.set_text(self.translator.gettext("section.telemetry"))
-
         metric_text = (
             (self.metric_cpu_temp, "metric.cpu_temperature", "metric.tctl_sensor"),
             (self.metric_gpu_temp, "metric.gpu_temperature", "metric.edge_sensor"),
@@ -507,6 +529,7 @@ class MainWindow(Gtk.ApplicationWindow):
         self.profile_label.set_text(self.translator.gettext("field.performance_preset"))
         self.custom_min_label.set_text(self.translator.gettext("field.custom_min_clock"))
         self.custom_max_label.set_text(self.translator.gettext("field.custom_max_clock"))
+        self.custom_mv_label.set_text(self.translator.gettext("field.voltage_limit"))
         self.throttle_label.set_text(self.translator.gettext("field.throttle"))
         self.recovery_label.set_text(self.translator.gettext("field.recovery"))
         self.cpu_label.set_text(self.translator.gettext("field.cpu_cores"))
@@ -518,15 +541,13 @@ class MainWindow(Gtk.ApplicationWindow):
         self.power_display_label.set_text(self.translator.gettext("power.display_block"))
         self.apply_button.set_label(self.translator.gettext("action.apply_now"))
         self.save_button.set_label(self.translator.gettext("action.apply_and_save"))
-        self.cu_save_button.set_label(self.translator.gettext("action.save_boot_profile"))
-        self._sync_cpu_toggle(self._cpu_mode_active())
+        self._sync_cpu_toggle(self.cpu_mode_toggle.get_active())
 
         preset_names = [
             f"{self.translator.gettext(item.label_key)} · {item.max_mhz} MHz / {item.max_mv} mV"
             for item in PRESETS.values()
         ]
         preset_names.append(self.translator.gettext("preset.custom"))
-        cu_names = [self.translator.gettext(f"cu.{count}") for count in self.CU_VALUES]
         power_names = [self.translator.gettext("power.blocked")]
         power_names.extend(
             self.translator.gettext("power.minutes", minutes=minutes)
@@ -535,11 +556,9 @@ class MainWindow(Gtk.ApplicationWindow):
         power_names.append(self.translator.gettext("preset.custom"))
         self._changing_power_controls = True
         self.profile_dropdown.set_model(Gtk.StringList.new(preset_names))
-        self.cu_dropdown.set_model(Gtk.StringList.new(cu_names))
         self.power_suspend_dropdown.set_model(Gtk.StringList.new(power_names))
         self.power_display_dropdown.set_model(Gtk.StringList.new(power_names))
         self.profile_dropdown.set_selected(preset_index)
-        self.cu_dropdown.set_selected(cu_index)
         self.power_suspend_dropdown.set_selected(power_suspend_index)
         self.power_display_dropdown.set_selected(power_display_index)
         self._changing_power_controls = False
@@ -553,26 +572,72 @@ class MainWindow(Gtk.ApplicationWindow):
         if self._last_snapshot is not None:
             self._render_snapshot(self._last_snapshot)
         else:
-            self.last_update.set_text(self.translator.gettext("common.just_now"))
             self._set_badge(self.translator.gettext("status.checking"), "status-warn")
             self.hero_state.set_text(self.translator.gettext("status.checking"))
             unavailable = self.translator.gettext("common.unavailable")
             self.cpu_core_value.set_text(unavailable)
             self.gpu_core_value.set_text(unavailable)
-            self.cpu_state_label.set_text(self.translator.gettext("status.checking"))
-            self.cu_state_label.set_text(self.translator.gettext("status.checking"))
+            self.cpu_mode_toggle.set_tooltip_text(self.translator.gettext("status.checking"))
             self.bios_value.set_text(self.translator.gettext("status.checking"))
             self.kernel_value.set_text(self.translator.gettext("status.checking"))
             self.governor_value.set_text(self.translator.gettext("status.checking"))
             self.power_idle_value.set_text(self.translator.gettext("status.checking"))
 
     def _on_profile_changed(self, _dropdown, _param) -> None:
+        selected = self.profile_dropdown.get_selected()
+        if selected < len(PRESETS):
+            preset = tuple(PRESETS.values())[selected]
+            self.custom_min_spin.set_value(preset.min_mhz)
+            self.custom_max_spin.set_value(preset.max_mhz)
+            self.custom_mv_spin.set_value(preset.max_mv)
+        self._draft_dirty = True
         self._update_custom_controls()
 
     def _update_custom_controls(self) -> None:
         custom = self.profile_dropdown.get_selected() == self.PRESET_KEYS.index("custom")
-        for widget in (self.custom_min_label, self.custom_max_label, self.custom_min_spin, self.custom_max_spin):
+        for widget in (
+            self.custom_min_label,
+            self.custom_max_label,
+            self.custom_mv_label,
+            self.custom_min_spin,
+            self.custom_max_spin,
+            self.custom_mv_spin,
+        ):
             widget.set_sensitive(custom and self._controls_sensitive)
+
+    def _on_wgp_toggled(self, _button) -> None:
+        self._draft_dirty = True
+        self._update_selected_cu_text()
+
+    def _selected_cu_masks(self) -> tuple[int, int, int, int]:
+        masks = []
+        for row in range(4):
+            mask = BASE_WGP_MASK
+            for wgp in (3, 4):
+                if self.wgp_buttons[(row, wgp)].get_active():
+                    mask |= 1 << wgp
+            masks.append(mask)
+        return tuple(masks)  # type: ignore[return-value]
+
+    def _update_selected_cu_text(self) -> None:
+        selected = sum(mask.bit_count() * 2 for mask in self._selected_cu_masks())
+        live = self._last_snapshot.cu_count if self._last_snapshot is not None else None
+        if live is None:
+            self.gpu_core_value.set_text(
+                self.translator.gettext("status.cu_selection_unknown", selected=selected)
+            )
+        elif selected != live:
+            self.gpu_core_value.set_text(
+                self.translator.gettext(
+                    "status.cu_selection_pending",
+                    selected=selected,
+                    live=live,
+                )
+            )
+        else:
+            self.gpu_core_value.set_text(
+                self.translator.gettext("status.cu_selection", live=live)
+            )
 
     def _on_close(self, *_args) -> bool:
         self._alive = False
@@ -580,9 +645,9 @@ class MainWindow(Gtk.ApplicationWindow):
 
     def _set_badge(self, text: str, style: str) -> None:
         for css_class in ("status-good", "status-warn", "status-error"):
-            self.status_badge.remove_css_class(css_class)
-        self.status_badge.add_css_class(style)
-        self.status_badge.set_text(text)
+            self.hero_state.remove_css_class(css_class)
+        self.hero_state.add_css_class(style)
+        self.hero_state.set_text(text)
 
     def _cpu_mode_active(self) -> bool:
         return bool(
@@ -593,6 +658,13 @@ class MainWindow(Gtk.ApplicationWindow):
                 and self._last_snapshot.cpu_threads >= 16
             )
         )
+
+    def _cpu_selection_from_snapshot(self, snapshot: StatusSnapshot) -> bool:
+        if self._cpu_mode_pending or snapshot.cpu_recovery_phase == "armed":
+            return True
+        if snapshot.cpu_saved_mode is not None:
+            return bool(snapshot.cpu_saved_mode)
+        return bool(snapshot.cpu_threads is not None and snapshot.cpu_threads >= 16)
 
     def _sync_cpu_toggle(self, active: bool) -> None:
         self._changing_cpu_toggle = True
@@ -647,6 +719,7 @@ class MainWindow(Gtk.ApplicationWindow):
     def _refresh_bootstrap(self) -> None:
         report = inspect(self.project_root)
         self.setup_banner.set_visible(True)
+        setup_ready = False
         self._cpu_mode_eligible = False
         if not report.bundle.ok:
             self._governor_ready = False
@@ -679,9 +752,19 @@ class MainWindow(Gtk.ApplicationWindow):
             self.setup_detail.set_text(
                 self.translator.gettext("setup.required", components=", ".join(missing))
                 if missing
-                else self.translator.gettext("setup.ready")
+                else ""
             )
             self._install_eligible = bool(missing)
+            setup_ready = not missing
+        for css_class in ("setup-required", "setup-ready"):
+            self.setup_banner.remove_css_class(css_class)
+        self.setup_banner.add_css_class("setup-ready" if setup_ready else "setup-required")
+        self.setup_title.set_text(
+            self.translator.gettext("setup.ready" if setup_ready else "setup.title")
+        )
+        self.install_button.set_label(
+            self.translator.gettext("setup.installed" if setup_ready else "setup.install")
+        )
         self.install_button.set_sensitive(self._controls_sensitive and self._install_eligible)
         cpu_toggle = getattr(self, "cpu_mode_toggle", None)
         if cpu_toggle is not None:
@@ -707,6 +790,7 @@ class MainWindow(Gtk.ApplicationWindow):
             governor_max=1800,
             throttle=85,
             recovery=75,
+            voltage_limit=930,
             gpu_temperature="42.0 °C",
             cpu_temperature="43.8 °C",
             cpu_temperature_source="Tctl",
@@ -717,6 +801,10 @@ class MainWindow(Gtk.ApplicationWindow):
             system=SystemInfo("American Megatrends", "Robin5.00", "07/01/2026", "6.19.8-bazzite", "x86_64"),
             cpu_cores=6,
             cpu_threads=12,
+            cu_masks=(0x1F, 0x1F, 0x1F, 0x1F),
+            cu_saved_masks=(0x1F, 0x1F, 0x1F, 0x1F),
+            cu_verified=True,
+            cpu_saved_mode=False,
         )
 
     @staticmethod
@@ -741,8 +829,10 @@ class MainWindow(Gtk.ApplicationWindow):
                 self.custom_min_spin.set_value(snapshot.governor_min)
             if snapshot.governor_max is not None:
                 self.custom_max_spin.set_value(snapshot.governor_max)
-            preset_ranges = tuple((item.min_mhz, item.max_mhz) for item in PRESETS.values())
-            current_range = (snapshot.governor_min, snapshot.governor_max)
+            if snapshot.voltage_limit is not None:
+                self.custom_mv_spin.set_value(snapshot.voltage_limit)
+            preset_ranges = tuple((item.min_mhz, item.max_mhz, item.max_mv) for item in PRESETS.values())
+            current_range = (snapshot.governor_min, snapshot.governor_max, snapshot.voltage_limit)
             if current_range in preset_ranges:
                 self.profile_dropdown.set_selected(preset_ranges.index(current_range))
             elif snapshot.governor_min is not None and snapshot.governor_max is not None:
@@ -751,11 +841,18 @@ class MainWindow(Gtk.ApplicationWindow):
                 self.throttle_spin.set_value(snapshot.throttle)
             if snapshot.recovery is not None:
                 self.recovery_spin.set_value(snapshot.recovery)
-            if snapshot.cu_saved_count in self.CU_VALUES:
-                self.cu_dropdown.set_selected(self.CU_VALUES.index(snapshot.cu_saved_count))
+            initial_masks = snapshot.cu_saved_masks or snapshot.cu_masks
+            if initial_masks is not None:
+                self._changing_cpu_toggle = True
+                for row, mask in enumerate(initial_masks):
+                    for wgp in (3, 4):
+                        self.wgp_buttons[(row, wgp)].set_active(bool(mask & (1 << wgp)))
+                self._changing_cpu_toggle = False
+            self._sync_cpu_toggle(self._cpu_selection_from_snapshot(snapshot))
             self._settings_hydrated = True
+            self._draft_dirty = False
         self._render_snapshot(snapshot)
-        if power_state is not None:
+        if power_state is not None and not self._draft_dirty:
             self._apply_power_state(power_state)
         self._update_custom_controls()
         return False
@@ -778,7 +875,7 @@ class MainWindow(Gtk.ApplicationWindow):
             else "—"
         )
         gpu_text = f"{snapshot.cu_count}/40 CU" if snapshot.cu_count is not None else "—"
-        return f"BC-250 · CPU {cpu_text} · GPU {gpu_text}"
+        return f"CPU {cpu_text} · GPU {gpu_text}"
 
     def _hero_badge(self, snapshot):
         if snapshot.errors:
@@ -837,32 +934,49 @@ class MainWindow(Gtk.ApplicationWindow):
             self.cpu_core_value.set_text(f"{snapshot.cpu_cores}C / {snapshot.cpu_threads}T")
         else:
             self.cpu_core_value.set_text(self.translator.gettext("common.unavailable"))
-        if self._cpu_mode_pending:
+        if snapshot.cpu_recovery_phase == "failed":
+            cpu_state_key = "status.cpu_recovery_failed"
+        elif self._cpu_mode_pending or snapshot.cpu_recovery_phase == "armed":
             cpu_state_key = "status.cpu_pending"
         elif snapshot.cpu_threads is not None and snapshot.cpu_threads >= 16:
             cpu_state_key = "status.cpu_unlocked"
+        elif snapshot.cpu_threads is not None and snapshot.cpu_saved_mode is True:
+            cpu_state_key = "status.cpu_saved_unlock_mismatch"
         elif snapshot.cpu_threads is not None:
             cpu_state_key = "status.cpu_stock"
         else:
             cpu_state_key = "common.unavailable"
-        self.cpu_state_label.set_text(self.translator.gettext(cpu_state_key))
-        self._sync_cpu_toggle(self._cpu_mode_pending or (snapshot.cpu_threads or 0) >= 16)
+        self.cpu_mode_toggle.set_tooltip_text(self.translator.gettext(cpu_state_key))
+        if not self._cpu_draft_changed:
+            self._sync_cpu_toggle(self._cpu_selection_from_snapshot(snapshot))
 
-        self.gpu_core_value.set_text(
-            f"{snapshot.cu_count}/40 CU"
-            if snapshot.cu_count is not None
-            else self.translator.gettext("common.unavailable")
-        )
-        self.cu_state_label.set_text(
-            self._render_message(snapshot.cu_state)
-            if snapshot.cu_state != UNKNOWN
-            else self.translator.gettext("status.cu_saved", count=snapshot.cu_saved_count)
-            if snapshot.cu_saved_count is not None
-            else self.translator.gettext("common.unavailable")
-        )
-        self.last_update.set_text(
-            self.translator.gettext("status.updated_at", time=snapshot.collected_at.strftime("%H:%M:%S"))
-        )
+        self._update_selected_cu_text()
+        for (row, wgp), button in self.wgp_buttons.items():
+            for css_class in ("wgp-base", "wgp-verified", "wgp-live-only", "wgp-mismatch"):
+                button.remove_css_class(css_class)
+            selected = button.get_active()
+            live = bool(snapshot.cu_masks and snapshot.cu_masks[row] & (1 << wgp))
+            saved = bool(snapshot.cu_saved_masks and snapshot.cu_saved_masks[row] & (1 << wgp))
+            if wgp < 3:
+                button.add_css_class("wgp-base")
+            elif snapshot.cu_verified and selected == live and saved == live:
+                button.add_css_class("wgp-verified")
+            elif live and not selected:
+                button.add_css_class("wgp-live-only")
+            elif selected != live or (snapshot.cu_saved_masks is not None and selected != saved):
+                button.add_css_class("wgp-mismatch")
+            name = f"SE{row // 2}.SH{row % 2}.WGP{wgp}"
+            if wgp < 3:
+                tooltip = self.translator.gettext("wgp.base_fixed", name=name)
+            else:
+                tooltip = self.translator.gettext(
+                    "wgp.tooltip",
+                    name=name,
+                    selected=self.translator.gettext("common.on" if selected else "common.off"),
+                    live=self.translator.gettext("common.on" if live else "common.off"),
+                    saved=self.translator.gettext("common.on" if saved else "common.off"),
+                )
+            button.set_tooltip_text(tooltip)
         self.hero_title.set_text(self._hero_hardware_text(snapshot))
         badge_key, badge_style = self._hero_badge(snapshot)
         self._set_badge(self.translator.gettext(badge_key), badge_style)
@@ -875,7 +989,7 @@ class MainWindow(Gtk.ApplicationWindow):
         self.hero_state.set_text(message)
         return False
 
-    def _selected_values(self) -> tuple[str, int, int, int, int]:
+    def _selected_values(self) -> DraftSettings:
         mode = self.PRESET_KEYS[self.profile_dropdown.get_selected()]
         throttle = self.throttle_spin.get_value_as_int()
         recovery = self.recovery_spin.get_value_as_int()
@@ -885,21 +999,36 @@ class MainWindow(Gtk.ApplicationWindow):
                 int(self.custom_min_spin.get_value()),
                 int(self.custom_max_spin.get_value()),
             )
+            max_mv = int(self.custom_mv_spin.get_value())
         else:
             preset = PRESETS[mode]
             min_mhz, max_mhz = preset.min_mhz, preset.max_mhz
-        return mode, min_mhz, max_mhz, throttle, recovery
+            max_mv = preset.max_mv
+        return DraftSettings(
+            min_mhz=min_mhz,
+            max_mhz=max_mhz,
+            max_mv=max_mv,
+            throttle=throttle,
+            recovery=recovery,
+            cpu_extra_cores=self.cpu_mode_toggle.get_active(),
+            cu_masks=self._selected_cu_masks(),
+            suspend_minutes=self._power_minutes(
+                self.power_suspend_dropdown,
+                self.power_suspend_custom_spin,
+            ),
+            display_minutes=self._power_minutes(
+                self.power_display_dropdown,
+                self.power_display_custom_spin,
+            ),
+        )
 
     def _set_controls_sensitive(self, value: bool) -> None:
         self._controls_sensitive = value
-        tuning_sensitive = value and self._governor_ready
+        tuning_sensitive = value and self._cpu_mode_eligible
         for name in ("apply_button", "save_button"):
             widget = getattr(self, name, None)
             if widget is not None:
                 widget.set_sensitive(tuning_sensitive)
-        cu_save_button = getattr(self, "cu_save_button", None)
-        if cu_save_button is not None:
-            cu_save_button.set_sensitive(value)
         cpu_toggle = getattr(self, "cpu_mode_toggle", None)
         if cpu_toggle is not None:
             cpu_toggle.set_sensitive(value and self._cpu_mode_eligible)
@@ -914,9 +1043,10 @@ class MainWindow(Gtk.ApplicationWindow):
                 widget.set_sensitive(value)
         if hasattr(self, "profile_dropdown"):
             self.profile_dropdown.set_sensitive(value)
-            self.cu_dropdown.set_sensitive(value)
             self.throttle_spin.set_sensitive(value)
             self.recovery_spin.set_sensitive(value)
+            for (row, wgp), button in self.wgp_buttons.items():
+                button.set_sensitive(value and wgp >= 3)
             self._update_custom_controls()
         self.install_button.set_sensitive(value and self._install_eligible)
 
@@ -941,9 +1071,23 @@ class MainWindow(Gtk.ApplicationWindow):
         )
         return False
 
+    def _show_success_result(self, payload: dict, title_key: str, detail_key: str) -> None:
+        if payload.get("reboot_required"):
+            self._show_message(
+                self.translator.gettext("dialog.reboot_required"),
+                self.translator.gettext("dialog.reboot_required_detail"),
+                Gtk.MessageType.WARNING,
+            )
+            return
+        self._show_message(
+            self.translator.gettext(title_key),
+            self._payload_text(payload, detail_key),
+            Gtk.MessageType.INFO,
+        )
+
     def _on_apply_runtime(self, _button) -> None:
         try:
-            mode, min_mhz, max_mhz, throttle, recovery = self._selected_values()
+            settings = self._selected_values()
         except ValueError as exc:
             self._show_message(
                 self.translator.gettext("dialog.input_check"),
@@ -951,32 +1095,14 @@ class MainWindow(Gtk.ApplicationWindow):
                 Gtk.MessageType.WARNING,
             )
             return
-        if mode == "custom":
-            operation = lambda: self.controller.apply_custom(min_mhz, max_mhz, throttle, recovery)
-        else:
-            operation = lambda: self.controller.apply_runtime(mode, throttle, recovery)
-        self._run_async(operation, self._runtime_done)
-
-    def _runtime_done(self, result: CommandResult) -> bool:
-        self._set_controls_sensitive(True)
-        if result.ok:
-            self._show_message(
-                self.translator.gettext("dialog.apply_complete"),
-                self.translator.gettext("dialog.apply_complete_detail"),
-                Gtk.MessageType.INFO,
-            )
-            self._schedule_refresh()
-        else:
-            self._show_message(
-                self.translator.gettext("dialog.apply_failed"),
-                result.stderr or result.stdout,
-                Gtk.MessageType.ERROR,
-            )
-        return False
+        self._run_async(
+            lambda: self._apply_all_worker(settings, False),
+            self._all_settings_done,
+        )
 
     def _on_save_persistent(self, _button) -> None:
         try:
-            mode, min_mhz, max_mhz, throttle, recovery = self._selected_values()
+            settings = self._selected_values()
         except ValueError as exc:
             self._show_message(
                 self.translator.gettext("dialog.input_check"),
@@ -984,82 +1110,68 @@ class MainWindow(Gtk.ApplicationWindow):
                 Gtk.MessageType.WARNING,
             )
             return
-        self._confirm(
-            self.translator.gettext("dialog.save_confirm"),
-            self.translator.gettext("dialog.save_confirm_detail"),
-            lambda: self._run_async(
-                lambda: self.privileged.save_custom_settings(min_mhz, max_mhz, throttle, recovery)
-                if mode == "custom"
-                else self.privileged.save_settings(mode, throttle, recovery),
-                self._privileged_done,
-            ),
+        self._run_async(
+            lambda: self._apply_all_worker(settings, True),
+            self._all_settings_done,
         )
 
-    def _on_save_cu(self, _button) -> None:
-        cu = self.CU_VALUES[self.cu_dropdown.get_selected()]
-        self._confirm(
-            self.translator.gettext("dialog.cu_confirm", count=cu),
-            self.translator.gettext("dialog.cu_confirm_detail"),
-            lambda: self._run_async(lambda: self.privileged.save_cu(cu), self._privileged_done),
-        )
+    def _apply_all_worker(self, settings: DraftSettings, persist: bool):
+        command, payload = self.privileged.apply_all(settings, persist)
+        if not (command.ok and payload.get("ok")):
+            return command, payload, None
+        suspend = self.power_controller.set_suspend_timeout(settings.suspend_minutes)
+        if not suspend.ok:
+            return suspend, {
+                "ok": False,
+                "message_id": "dialog.power_failed",
+                "message_args": {},
+                "message": suspend.stderr or suspend.stdout,
+            }, None
+        display = self.power_controller.set_display_timeout(settings.display_minutes)
+        if not display.ok:
+            return display, {
+                "ok": False,
+                "message_id": "dialog.power_failed",
+                "message_args": {},
+                "message": display.stderr or display.stdout,
+            }, None
+        return command, payload, self.power_controller.inspect()
 
-    def _on_cpu_mode_toggled(self, toggle) -> None:
-        if self._changing_cpu_toggle:
-            return
-        target = bool(toggle.get_active())
-        current = self._cpu_mode_active()
-        self._sync_cpu_toggle(current)
-        if target == current:
-            return
-        title_key = "dialog.cpu_enable_confirm" if target else "dialog.cpu_disable_confirm"
-        detail_key = "dialog.cpu_enable_confirm_detail" if target else "dialog.cpu_disable_confirm_detail"
-        self._confirm(
-            self.translator.gettext(title_key),
-            self.translator.gettext(detail_key),
-            lambda: self._begin_cpu_mode_change(target),
-        )
-
-    def _begin_cpu_mode_change(self, target: bool) -> None:
-        self._cpu_mode_target = target
-        operation = (
-            self.privileged.set_cpu_mode
-            if self._helper_ready
-            else self.privileged.install_then_set_cpu_mode
-        )
-        self._run_async(lambda: operation(target), lambda response: self._cpu_mode_done(target, response))
-
-    def _cpu_mode_done(self, target: bool, response) -> bool:
+    def _all_settings_done(self, response) -> bool:
         self._set_controls_sensitive(True)
-        command, payload = response
+        command, payload, power_state = response
         if command.returncode in (126, 127) and not payload.get("ok"):
-            self._sync_cpu_toggle(self._cpu_mode_active())
             self._show_message(
                 self.translator.gettext("dialog.cancelled"),
                 self.translator.gettext("dialog.auth_cancelled"),
                 Gtk.MessageType.INFO,
             )
         elif command.ok and payload.get("ok"):
-            self._helper_ready = True
-            self._cpu_mode_pending = bool(target and payload.get("reboot_required"))
-            self._sync_cpu_toggle(target)
-            self._refresh_bootstrap()
-            self._show_message(
-                self.translator.gettext("dialog.cpu_mode_complete"),
-                self._payload_text(
-                    payload,
-                    "helper.cpu_mode_enabled" if target else "helper.cpu_mode_disabled",
-                ),
-                Gtk.MessageType.INFO,
+            self._draft_dirty = False
+            if payload.get("persist"):
+                self._cpu_draft_changed = False
+            if power_state is not None:
+                self._apply_power_state(power_state)
+            self._show_success_result(
+                payload,
+                "dialog.apply_complete",
+                "dialog.apply_complete_detail",
             )
             self._schedule_refresh()
         else:
-            self._sync_cpu_toggle(self._cpu_mode_active())
             self._show_message(
-                self.translator.gettext("dialog.cpu_mode_failed"),
-                self._payload_text(payload, "dialog.cpu_mode_failed"),
+                self.translator.gettext("dialog.apply_failed"),
+                self._payload_text(payload, "dialog.apply_failed"),
                 Gtk.MessageType.ERROR,
             )
         return False
+
+    def _on_cpu_mode_toggled(self, toggle) -> None:
+        if self._changing_cpu_toggle:
+            return
+        self._draft_dirty = True
+        self._cpu_draft_changed = True
+        self._sync_cpu_toggle(toggle.get_active())
 
     def _power_minutes(self, dropdown, custom_spin) -> int:
         selected = dropdown.get_selected()
@@ -1071,80 +1183,25 @@ class MainWindow(Gtk.ApplicationWindow):
         if self._changing_power_controls:
             return
         self._update_power_custom_visibility()
-        minutes = self._power_minutes(self.power_suspend_dropdown, self.power_suspend_custom_spin)
-        self._run_async(
-            lambda: self._change_power_setting("suspend", minutes),
-            lambda response: self._power_setting_done(response),
-        )
+        self._draft_dirty = True
 
     def _on_power_display_changed(self, _dropdown, _param) -> None:
         if self._changing_power_controls:
             return
         self._update_power_custom_visibility()
-        minutes = self._power_minutes(self.power_display_dropdown, self.power_display_custom_spin)
-        self._run_async(
-            lambda: self._change_power_setting("display", minutes),
-            lambda response: self._power_setting_done(response),
-        )
+        self._draft_dirty = True
 
     def _on_power_suspend_custom_changed(self, _spin) -> None:
         if self._changing_power_controls:
             return
         if self.power_suspend_dropdown.get_selected() == len(self.POWER_PRESET_MINUTES):
-            self._on_power_suspend_changed(self.power_suspend_dropdown, None)
+            self._draft_dirty = True
 
     def _on_power_display_custom_changed(self, _spin) -> None:
         if self._changing_power_controls:
             return
         if self.power_display_dropdown.get_selected() == len(self.POWER_PRESET_MINUTES):
-            self._on_power_display_changed(self.power_display_dropdown, None)
-
-    def _change_power_setting(self, kind: str, minutes: int):
-        result = (
-            self.power_controller.set_suspend_timeout(minutes)
-            if kind == "suspend"
-            else self.power_controller.set_display_timeout(minutes)
-        )
-        return result, self.power_controller.inspect() if result.ok else None
-
-    def _power_setting_done(self, response) -> bool:
-        self._set_controls_sensitive(True)
-        result, state = response
-        if result.ok and state is not None:
-            self._apply_power_state(state)
-        else:
-            if self._last_power_state is not None:
-                self._apply_power_state(self._last_power_state)
-            self._show_message(
-                self.translator.gettext("dialog.power_failed"),
-                result.stderr or result.stdout,
-                Gtk.MessageType.ERROR,
-            )
-        return False
-
-    def _privileged_done(self, response) -> bool:
-        self._set_controls_sensitive(True)
-        command, payload = response
-        if command.returncode in (126, 127) and not payload.get("ok"):
-            self._show_message(
-                self.translator.gettext("dialog.cancelled"),
-                self.translator.gettext("dialog.auth_cancelled"),
-                Gtk.MessageType.INFO,
-            )
-        elif command.ok and payload.get("ok"):
-            self._show_message(
-                self.translator.gettext("dialog.save_complete"),
-                self._payload_text(payload, "dialog.save_complete"),
-                Gtk.MessageType.INFO,
-            )
-            self._schedule_refresh()
-        else:
-            self._show_message(
-                self.translator.gettext("dialog.save_failed"),
-                self._payload_text(payload, "dialog.save_failed"),
-                Gtk.MessageType.ERROR,
-            )
-        return False
+            self._draft_dirty = True
 
     def _on_install(self, _button) -> None:
         self._run_async(self.privileged.install, self._install_done)
@@ -1152,10 +1209,10 @@ class MainWindow(Gtk.ApplicationWindow):
     def _install_done(self, response) -> bool:
         command, payload = response
         if command.ok and payload.get("ok"):
-            self._show_message(
-                self.translator.gettext("dialog.install_complete"),
-                self._payload_text(payload, "dialog.install_complete"),
-                Gtk.MessageType.INFO,
+            self._show_success_result(
+                payload,
+                "dialog.install_complete",
+                "dialog.install_complete",
             )
             self._refresh_bootstrap()
         elif command.returncode in (126, 127):

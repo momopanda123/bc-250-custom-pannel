@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 from .presets import get_preset, validate_frequency_range, validate_temperature
+from .settings import DraftSettings, validate_u32
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,17 +49,45 @@ class GovernorController:
             ]
         )
 
-    def _apply_range(self, min_mhz: int, max_mhz: int, throttle: int, recovery: int) -> CommandResult:
+    def _apply_range(
+        self,
+        min_mhz: int,
+        max_mhz: int,
+        max_mv: int,
+        throttle: int,
+        recovery: int,
+    ) -> CommandResult:
         min_mhz, max_mhz = validate_frequency_range(min_mhz, max_mhz)
+        max_mv = validate_u32(max_mv, "error.invalid_voltage")
         throttle, recovery = validate_temperature(throttle, recovery)
-        return self._call("SetTuning", "uuuu", min_mhz, max_mhz, throttle, recovery)
+        return self._call(
+            "SetTuningWithVoltage",
+            "uuuuu",
+            min_mhz,
+            max_mhz,
+            max_mv,
+            throttle,
+            recovery,
+        )
 
     def apply_runtime(self, preset_key: str, throttle: int, recovery: int) -> CommandResult:
         preset = get_preset(preset_key)
-        return self._apply_range(preset.min_mhz, preset.max_mhz, throttle, recovery)
+        return self._apply_range(
+            preset.min_mhz,
+            preset.max_mhz,
+            preset.max_mv,
+            throttle,
+            recovery,
+        )
 
-    def apply_custom(self, min_mhz: int, max_mhz: int, throttle: int, recovery: int) -> CommandResult:
-        return self._apply_range(min_mhz, max_mhz, throttle, recovery)
+    def apply_custom(self, min_mhz: int, max_mhz: int, *values: int) -> CommandResult:
+        if len(values) == 2:
+            max_mv, throttle, recovery = 0, values[0], values[1]
+        elif len(values) == 3:
+            max_mv, throttle, recovery = values
+        else:
+            raise TypeError("apply_custom expects throttle/recovery or max_mv/throttle/recovery")
+        return self._apply_range(min_mhz, max_mhz, max_mv, throttle, recovery)
 
 
 class PrivilegedRunner:
@@ -172,5 +201,31 @@ class PrivilegedRunner:
                 "--cpu-mode",
                 "on" if enabled else "off",
             ]
+        )
+        return self._json_result(result)
+
+    def apply_all(self, settings: DraftSettings, persist: bool) -> tuple[CommandResult, dict]:
+        if not isinstance(settings, DraftSettings):
+            raise TypeError("settings must be DraftSettings")
+        result = self.runner(
+            self._helper_command(
+                "apply-all",
+                "--min-mhz",
+                str(settings.min_mhz),
+                "--max-mhz",
+                str(settings.max_mhz),
+                "--max-mv",
+                str(settings.max_mv),
+                "--throttle",
+                str(settings.throttle),
+                "--recovery",
+                str(settings.recovery),
+                "--cpu-extra-cores",
+                "on" if settings.cpu_extra_cores else "off",
+                "--cu-masks",
+                settings.cu_masks_csv,
+                "--persist",
+                "on" if persist else "off",
+            )
         )
         return self._json_result(result)

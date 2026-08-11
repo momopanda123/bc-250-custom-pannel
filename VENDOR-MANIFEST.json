@@ -2,7 +2,7 @@
   "schema": 1,
   "project": "bc-250-custom-pannel",
   "target": "AMD BC-250 / Bazzite x86_64",
-  "generated": "2026-08-02",
+  "generated": "2026-08-11",
   "components": [
     {
       "name": "cyan-skillfish-governor-smu release archive",
@@ -16,9 +16,9 @@
     {
       "name": "cyan-skillfish-governor-smu",
       "path": "vendor/bin/cyan-skillfish-governor-smu",
-      "version": "0.4.11-bc250.1",
+      "version": "0.4.11-bc250.2",
       "source": "project patch based on upstream v0.4.11 commit 60ab6e5b354f01f287c73d920990dcd618a674cc",
-      "sha256": "1b9ab5240d1474909ed1b1502a8e0eb0e910dff49309ea65caf8e18d2bbde5d3",
+      "sha256": "4941557befac3824cd94e6288e98cd86bc72e96d5f02caca732f2ef01eed1b26",
       "license": "MIT",
       "target": "Bazzite x86_64",
       "install_path": "/etc/cyan-skillfish-governor-smu/cyan-skillfish-governor-smu",
@@ -34,11 +34,20 @@
       "target": "reproducible source patch"
     },
     {
+      "name": "cyan-skillfish-governor-smu BC-250 voltage limit patch",
+      "path": "vendor/patches/cyan-skillfish-governor-smu-v0.4.11-bc250.2.patch",
+      "version": "0.4.11-bc250.2",
+      "source": "incremental project patch from 0.4.11-bc250.1",
+      "sha256": "8eb9076f2ab73fed5843cab8dda342c6a7199154ee99a3072066e94806723c85",
+      "license": "MIT",
+      "target": "reproducible source patch"
+    },
+    {
       "name": "bc250-cu-live-manager",
       "path": "vendor/bin/bc250-cu-live-manager",
-      "version": "2026-08-02-verified",
+      "version": "2026-08-11-readback",
       "source": "project:bc250-cu-live-manager",
-      "sha256": "304d0b51838ec4ffc80c56894c4867a04523bf1ba27e51f662cbfc79616e442d",
+      "sha256": "38f3c97f408f7a904b468585f0dc9be28d330fa4ac20b83bdb828a1056fb0d22",
       "license": "project component",
       "target": "AMD BC-250",
       "install_path": "/usr/local/bin/bc250-cu-live-manager",
@@ -58,9 +67,9 @@
     {
       "name": "governor default config",
       "path": "vendor/templates/governor-config.toml",
-      "version": "500-1800-default-350-2400-curve",
+      "version": "500-1800-default-350-2400-curve-voltage-limit",
       "source": "project template based on upstream v0.4.11 safe-point curve",
-      "sha256": "12dc2e2709280780600820591f0bfa396d6c346574efda430827acf9be865494",
+      "sha256": "4ec6dce3fb603b52eedb497bf09d48dffc175fb23e38fa23c923e7c46b664b89",
       "license": "project configuration",
       "target": "Bazzite",
       "install_path": "/etc/cyan-skillfish-governor-smu/config.toml",
@@ -84,7 +93,7 @@
     {
       "name": "CPU mode preference",
       "path": "vendor/templates/bc250-cpu-mode.conf",
-      "version": "1",
+      "version": "2",
       "source": "project template",
       "sha256": "a61b66dee66b3e4c60a1fab0664ce622d1026dd9f2ac5872502828d0f1e92229",
       "license": "project configuration",
@@ -119,9 +128,9 @@
     {
       "name": "CPU mode systemd service",
       "path": "vendor/templates/bc250-cpu-mode.service",
-      "version": "1",
+      "version": "2",
       "source": "project template",
-      "sha256": "c72d854b9c4e8577d48ddbfbf30ab31451d5566906229521e359fba21ab29802",
+      "sha256": "303f976c728170aafbe6487510e59188d3a8370e926409e2a7d30b410cb5d72f",
       "license": "project configuration",
       "target": "AMD BC-250",
       "install_path": "/etc/systemd/system/bc250-cpu-mode.service",
@@ -152,9 +161,9 @@
     {
       "name": "custom pannel privileged helper",
       "path": "bc250_privileged.py",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "source": "project source",
-      "sha256": "da17dfdd5f837c1e1f9cf6540a9746b996ea18008aaf72ada3886d547c45e777",
+      "sha256": "d028b142bffbe222cb9855b542a2a83deab9c01b634a39294d3e63b5e87686d1",
       "license": "project component",
       "target": "Bazzite",
       "install_path": "/usr/local/libexec/bc250-custom-pannel-privileged",
