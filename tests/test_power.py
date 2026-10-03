@@ -44,7 +44,7 @@ class PowerTests(unittest.TestCase):
                 ("gsettings", "get", power.SCREENSAVER_SCHEMA, "idle-activation-enabled"): CommandResult(True, "false", "", 0),
                 ("gsettings", "get", power.POWER_SCHEMA, "idle-dim"): CommandResult(True, "false", "", 0),
             }
-            controller = power.PowerController(
+            controller = power.PowerController(desktop="gnome", 
                 runner=MappingRunner(responses),
                 cpuidle_driver=driver,
                 cpuinfo=cpuinfo,
@@ -74,7 +74,7 @@ class PowerTests(unittest.TestCase):
             ("gsettings", "get", power.POWER_SCHEMA, "idle-dim"): CommandResult(True, "true", "", 0),
         }
 
-        state = power.PowerController(runner=MappingRunner(responses)).inspect()
+        state = power.PowerController(desktop="gnome", runner=MappingRunner(responses)).inspect()
 
         self.assertFalse(state.suspend_blocked)
         self.assertFalse(state.display_blank_blocked)
@@ -97,7 +97,7 @@ class PowerTests(unittest.TestCase):
         ]
         runner = MappingRunner({command: CommandResult(True, "", "", 0) for command in expected})
 
-        result = power.PowerController(runner=runner).set_suspend_timeout(30)
+        result = power.PowerController(desktop="gnome", runner=runner).set_suspend_timeout(30)
 
         self.assertTrue(result.ok, result.stderr)
         self.assertEqual(runner.calls, expected)
@@ -129,7 +129,7 @@ class PowerTests(unittest.TestCase):
         for minutes, expected in cases:
             runner = MappingRunner({command: CommandResult(True, "", "", 0) for command in expected})
 
-            result = power.PowerController(runner=runner).set_display_timeout(minutes)
+            result = power.PowerController(desktop="gnome", runner=runner).set_display_timeout(minutes)
 
             with self.subTest(minutes=minutes):
                 self.assertTrue(result.ok, result.stderr)
@@ -145,7 +145,7 @@ class PowerTests(unittest.TestCase):
             hasattr(power.PowerController, "set_display_timeout"),
             "timed display control is missing",
         )
-        controller = power.PowerController(runner=MappingRunner({}))
+        controller = power.PowerController(desktop="gnome", runner=MappingRunner({}))
         for minutes in (-1, 241):
             with self.subTest(minutes=minutes), self.assertRaises(ValueError):
                 controller.set_suspend_timeout(minutes)
@@ -162,7 +162,7 @@ class PowerTests(unittest.TestCase):
             ]
             runner = MappingRunner({command: CommandResult(True, "", "", 0) for command in expected})
 
-            result = power.PowerController(runner=runner).set_suspend_blocked(blocked)
+            result = power.PowerController(desktop="gnome", runner=runner).set_suspend_blocked(blocked)
 
             with self.subTest(blocked=blocked):
                 self.assertTrue(result.ok, result.stderr)
@@ -186,11 +186,179 @@ class PowerTests(unittest.TestCase):
             ]
             runner = MappingRunner({command: CommandResult(True, "", "", 0) for command in expected})
 
-            result = power.PowerController(runner=runner).set_display_blank_blocked(blocked)
+            result = power.PowerController(desktop="gnome", runner=runner).set_display_blank_blocked(blocked)
 
             with self.subTest(blocked=blocked):
                 self.assertTrue(result.ok, result.stderr)
                 self.assertEqual(runner.calls, expected)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class KdePowerTests(unittest.TestCase):
+    def _write_profilesrc(self, root, content):
+        path = Path(root) / "powermanagementprofilesrc"
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def test_kde_inspect_reads_powerdevil_idle_timeouts(self):
+        power = importlib.import_module("bc250.power")
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_profilesrc(
+                tmp,
+                "[AC][SuspendSession]\nidleTime=1800000\nsuspendType=1\n"
+                "\n[AC][DPMSControl]\nidleTime=600000\n",
+            )
+            controller = power.PowerController(
+                desktop="kde",
+                config_home=Path(tmp),
+                runner=MappingRunner({}),
+            )
+            state = controller.inspect()
+
+        self.assertFalse(state.suspend_blocked)
+        self.assertFalse(state.display_blank_blocked)
+        self.assertEqual(state.suspend_minutes, 30)
+        self.assertEqual(state.display_minutes, 10)
+
+    def test_kde_inspect_missing_config_reports_unknown(self):
+        power = importlib.import_module("bc250.power")
+        with tempfile.TemporaryDirectory() as tmp:
+            controller = power.PowerController(
+                desktop="kde",
+                config_home=Path(tmp),
+                runner=MappingRunner({}),
+            )
+            state = controller.inspect()
+
+        self.assertFalse(state.suspend_blocked)
+        self.assertFalse(state.display_blank_blocked)
+        self.assertIsNone(state.suspend_minutes)
+        self.assertIsNone(state.display_minutes)
+
+    def test_kde_inspect_zero_idle_time_means_blocked(self):
+        power = importlib.import_module("bc250.power")
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_profilesrc(
+                tmp,
+                "[AC][SuspendSession]\nidleTime=0\n\n[AC][DPMSControl]\nidleTime=0\n",
+            )
+            controller = power.PowerController(
+                desktop="kde",
+                config_home=Path(tmp),
+                runner=MappingRunner({}),
+            )
+            state = controller.inspect()
+
+        self.assertTrue(state.suspend_blocked)
+        self.assertTrue(state.display_blank_blocked)
+        self.assertEqual(state.suspend_minutes, 0)
+        self.assertEqual(state.display_minutes, 0)
+
+    def test_kde_set_suspend_timeout_uses_kwriteconfig(self):
+        power = importlib.import_module("bc250.power")
+        expected = (
+            "kwriteconfig6",
+            "--file", "powermanagementprofilesrc",
+            "--group", "AC",
+            "--group", "SuspendSession",
+            "--key", "idleTime",
+            "1800000",
+        )
+        runner = MappingRunner({expected: CommandResult(True, "", "", 0)})
+
+        result = power.PowerController(
+            desktop="kde", kwriteconfig="kwriteconfig6", runner=runner
+        ).set_suspend_timeout(30)
+
+        self.assertTrue(result.ok, result.stderr)
+        self.assertEqual(runner.calls, [expected])
+
+    def test_kde_set_display_timeout_zero_deletes_key(self):
+        power = importlib.import_module("bc250.power")
+        expected = (
+            "kwriteconfig6",
+            "--file", "powermanagementprofilesrc",
+            "--group", "AC",
+            "--group", "DPMSControl",
+            "--key", "idleTime",
+            "--delete",
+        )
+        runner = MappingRunner({expected: CommandResult(True, "", "", 0)})
+
+        result = power.PowerController(
+            desktop="kde", kwriteconfig="kwriteconfig6", runner=runner
+        ).set_display_timeout(0)
+
+        self.assertTrue(result.ok, result.stderr)
+        self.assertEqual(runner.calls, [expected])
+
+    def test_kde_set_suspend_blocked_disables_and_reenables(self):
+        power = importlib.import_module("bc250.power")
+        delete = (
+            "kwriteconfig6",
+            "--file", "powermanagementprofilesrc",
+            "--group", "AC",
+            "--group", "SuspendSession",
+            "--key", "idleTime",
+            "--delete",
+        )
+        write = (
+            "kwriteconfig6",
+            "--file", "powermanagementprofilesrc",
+            "--group", "AC",
+            "--group", "SuspendSession",
+            "--key", "idleTime",
+            str(30 * 60000),
+        )
+        runner = MappingRunner(
+            {
+                delete: CommandResult(True, "", "", 0),
+                write: CommandResult(True, "", "", 0),
+            }
+        )
+        controller = power.PowerController(
+            desktop="kde", kwriteconfig="kwriteconfig6", runner=runner
+        )
+
+        self.assertTrue(controller.set_suspend_blocked(True).ok)
+        self.assertTrue(controller.set_suspend_blocked(False).ok)
+        self.assertEqual(runner.calls, [delete, write])
+
+    def test_kde_set_fails_clearly_without_kwriteconfig(self):
+        import unittest.mock as mock
+
+        power = importlib.import_module("bc250.power")
+        runner = MappingRunner({})
+        controller = power.PowerController(desktop="kde", runner=runner)
+        with mock.patch("shutil.which", return_value=None):
+            result = controller.set_suspend_timeout(30)
+
+        self.assertFalse(result.ok)
+        self.assertIn("kwriteconfig", result.stderr)
+        self.assertEqual(runner.calls, [])
+
+    def test_kde_timeout_minutes_reject_values_outside_custom_range(self):
+        power = importlib.import_module("bc250.power")
+        controller = power.PowerController(
+            desktop="kde", kwriteconfig="kwriteconfig6", runner=MappingRunner({})
+        )
+        for minutes in (-1, 241):
+            with self.subTest(minutes=minutes), self.assertRaises(ValueError):
+                controller.set_suspend_timeout(minutes)
+            with self.subTest(minutes=minutes), self.assertRaises(ValueError):
+                controller.set_display_timeout(minutes)
+
+    def test_desktop_detection_matches_kde_case_insensitively(self):
+        power = importlib.import_module("bc250.power")
+        for value in ("KDE", "kde", "Kde"):
+            controller = power.PowerController(desktop=value, runner=MappingRunner({}))
+            self.assertTrue(controller._is_kde(), value)
+        for value in ("GNOME", "ubuntu", ""):
+            controller = power.PowerController(desktop=value, runner=MappingRunner({}))
+            self.assertFalse(controller._is_kde(), value)
 
 
 if __name__ == "__main__":
