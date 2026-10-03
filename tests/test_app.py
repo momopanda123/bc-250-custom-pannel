@@ -26,7 +26,7 @@ def find_window_method(name):
 def load_window_method(name):
     method = find_window_method(name)
     module = ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[]))
-    namespace = {"StatusSnapshot": object, "PowerState": object}
+    namespace = {"StatusSnapshot": object, "PowerState": object, "DraftSettings": DraftSettings}
     exec(compile(module, "bc250/window.py", "exec"), namespace)
     return namespace[name], method
 
@@ -360,6 +360,7 @@ class AppTests(unittest.TestCase):
         window = types.SimpleNamespace(
             _set_controls_sensitive=lambda value: events.append(("sensitive", value)),
             _show_message=lambda *_args: events.append(("message",)),
+            _show_success_result=lambda *_args: events.append(("message",)),
             _refresh_bootstrap=lambda: events.append(("refresh",)),
             _payload_text=lambda *_args: "installed",
             translator=types.SimpleNamespace(gettext=lambda key: key),
@@ -718,6 +719,40 @@ class AppTests(unittest.TestCase):
         self.assertTrue(apply_button.sensitive)
         self.assertTrue(save_button.sensitive)
         self.assertTrue(install_button.sensitive)
+
+    def test_kde_never_readback_keeps_both_dropdowns_at_never(self):
+        apply_state, _ = load_window_method("_apply_power_state")
+        set_state, _ = load_window_method("_set_power_control_state")
+        window = types.SimpleNamespace(
+            POWER_PRESET_MINUTES=(0, 5, 10, 15, 30, 60),
+            translator=types.SimpleNamespace(gettext=lambda key, **_kwargs: key),
+            power_idle_value=TextWidget(),
+            power_suspend_dropdown=SelectionWidget(4),
+            power_display_dropdown=SelectionWidget(2),
+            power_suspend_custom_spin=IntegerSpinWidget(15),
+            power_display_custom_spin=IntegerSpinWidget(5),
+            _update_power_custom_visibility=lambda: None,
+        )
+        window._set_power_control_state = lambda *args: set_state(window, *args)
+        state = types.SimpleNamespace(cpu_idle_mode="mwait", gpu_dpm_mode="auto", suspend_minutes=0, display_minutes=0)
+        apply_state(window, state)
+        self.assertEqual(window.power_suspend_dropdown.selected, 0)
+        self.assertEqual(window.power_display_dropdown.selected, 0)
+
+    def test_kde_tool_error_is_not_authentication_cancelled(self):
+        from bc250.power import PowerController
+        done, _ = load_window_method("_all_settings_done")
+        messages = []
+        window = types.SimpleNamespace(
+            _set_controls_sensitive=lambda _value: None,
+            translator=types.SimpleNamespace(gettext=lambda key: key),
+            _payload_text=lambda payload, _fallback: payload["message"],
+            _show_message=lambda *args: messages.append(args),
+        )
+        done.__globals__["Gtk"] = types.SimpleNamespace(MessageType=types.SimpleNamespace(INFO="info", ERROR="error"))
+        result = PowerController._kde_error("kwriteconfig6 not found")
+        self.assertFalse(done(window, (result, {"ok": False, "message": result.stderr}, None)))
+        self.assertEqual(messages, [("dialog.apply_failed", "kwriteconfig6 not found", "error")])
 
     def test_power_idle_card_uses_timeout_dropdowns_with_custom_minutes(self):
         source = Path("bc250/window.py").read_text(encoding="utf-8")

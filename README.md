@@ -10,7 +10,7 @@ A GTK4 control panel for monitoring and configuring an AMD BC-250 running Bazzit
 
 - AMD BC-250
 - Bazzite x86_64
-- Bazzite GNOME or Deck GNOME
+- Bazzite GNOME / Deck GNOME, or Bazzite KDE Plasma 5 / 6
 - Wayland session
 
 Other GPUs and Linux distributions are not supported installation targets.
@@ -27,7 +27,7 @@ cd bc-250-custom-pannel
 
 `run.sh` is the main launcher. It starts the GUI immediately and does not require `install-app.sh`. Use `./run.sh --check` when you only want to validate the Bazzite environment without opening the panel.
 
-To add an optional **BC-250 Control Panel** icon to the GNOME app grid, run this once:
+To add an optional **BC-250 Control Panel** icon to the desktop application menu, run this once:
 
 ```bash
 ./install-app.sh
@@ -103,7 +103,30 @@ Use `System sleep` and `Screen off` to select the automatic suspend and display-
 - 5/10/15/30/60 minutes: use the selected delay
 - `Custom`: enter 1–240 minutes
 
-These options control only the GNOME session timers. Selecting `Never` does not disable CPU idle states or automatic GPU power management.
+The panel selects GNOME (`gsettings`) or KDE Plasma (PowerDevil) from the desktop session. Selecting `Never` does not disable CPU idle states or automatic GPU power management.
+
+#### KDE Plasma power settings
+
+KDE support is on the `kde-support` branch; select it before launching the panel:
+
+```bash
+git switch kde-support
+```
+
+- Run as your normal desktop user, inside the active Plasma session, not with `sudo` or from an unrelated SSH session.
+- Python 3, PyGObject and GTK4 are required for the GUI on KDE as well. The panel does not install these desktop dependencies.
+- Power settings need the matching `kwriteconfig5` or `kwriteconfig6`, `busctl`, and a running PowerDevil session service. The version is taken from `KDE_SESSION_VERSION`, with `plasmashell --version` as a fallback; ambiguous versions fail without writing configuration.
+- Plasma 5 uses `powermanagementprofilesrc`: suspend delays are milliseconds, display-off delays are seconds. Plasma 6 uses `powerdevilrc` with explicit enable flags and delays in seconds. Files are read and written under `XDG_CONFIG_HOME`, or `~/.config` when unset.
+- Only the **AC profile** is changed because the BC-250 is a desktop board. Battery profiles, brightness, screen dimming, screen-lock policy and hardware settings are not changed by these timers. KDE's separate locked-screen timeout can still differ from the unlocked-screen timeout.
+- `Never` explicitly disables the selected action and remains `Never` after a refresh. A positive system-sleep delay selects suspend-to-RAM, replacing an existing shutdown/hibernate action for that timer.
+- After writing, the panel calls PowerDevil's session D-Bus `refreshStatus`. A missing tool, failed write or failed refresh is reported as an error, not a successful apply. A refresh failure means the file was saved but the running service did not confirm application; a later reload can apply it.
+- If settings are absent or unreadable, the panel cannot determine KDE's effective defaults. The displayed 15-minute sleep / 5-minute screen values are editable fallback values, not a readback confirmation. Applying all settings writes the values currently shown.
+
+Both `Apply` and `Save` write the desktop's persistent timer configuration, matching the existing GNOME behavior. The difference between those buttons concerns the panel's hardware configuration.
+
+KDE regression tests use separate Plasma 5/6 configuration fixtures, command contracts and write/read round trips. They do **not** replace an on-device Bazzite/KDE suspend/display test.
+
+PowerDevil reference: [Plasma 6 schema](https://github.com/KDE/powerdevil/blob/master/PowerDevilProfileSettings.kcfg), [Plasma 5 → 6 migration and units](https://github.com/KDE/powerdevil/blob/master/daemon/powerdevilmigrateconfig.cpp).
 
 ### Apply and Save
 
@@ -118,7 +141,7 @@ Use the selector at the top right to choose 한국어, English, 日本語, or �
 
 ## Remove
 
-To remove only the GNOME app-grid entry:
+To remove only the desktop application-menu entry:
 
 ```bash
 ./uninstall-app.sh

@@ -10,7 +10,7 @@ AMD BC-250에서 Bazzite를 사용할 때 상태 확인과 성능 설정을 한 
 
 - AMD BC-250
 - Bazzite x86_64
-- Bazzite GNOME 또는 Deck GNOME
+- Bazzite GNOME / Deck GNOME 또는 Bazzite KDE Plasma 5 / 6
 - Wayland 세션
 
 다른 GPU나 다른 Linux 배포판은 설치 대상이 아닙니다.
@@ -27,7 +27,7 @@ cd bc-250-custom-pannel
 
 `run.sh`가 기본 실행 파일이며 `install-app.sh`는 필수가 아닙니다. GUI를 열지 않고 Bazzite 환경만 확인하려면 `./run.sh --check`를 사용합니다.
 
-GNOME 앱 목록에 **BC-250 Control Panel** 아이콘을 추가하려면 다음을 한 번만 실행합니다.
+데스크톱 앱 목록에 **BC-250 Control Panel** 아이콘을 추가하려면 다음을 한 번만 실행합니다.
 
 ```bash
 ./install-app.sh
@@ -103,7 +103,30 @@ GUI의 CU 활성화 표시는 선택한 레지스터 값이 실제로 다시 읽
 - 5/10/15/30/60분: 지정 시간 사용
 - `Custom`: 1–240분 직접 입력
 
-이 설정은 GNOME의 절전 타이머만 변경합니다. `Never`를 선택해도 CPU 유휴 대기와 GPU 자동 저전력 동작은 유지됩니다.
+데스크톱 세션에 따라 GNOME(`gsettings`) 또는 KDE Plasma(PowerDevil) 설정을 사용합니다. `Never`를 선택해도 CPU 유휴 대기와 GPU 자동 저전력 동작은 유지됩니다.
+
+#### KDE Plasma 전원 설정
+
+KDE 지원은 `kde-support` 브랜치에 있습니다. 실행 전에 해당 브랜치를 선택합니다.
+
+```bash
+git switch kde-support
+```
+
+- Plasma에 로그인한 일반 사용자로 실행하세요. `sudo`나 별도의 SSH 세션에서는 사용자 전원 관리에 접근하지 못할 수 있습니다.
+- KDE에서도 GUI 실행에는 Python 3, PyGObject, GTK4가 필요합니다. 패널이 이 데스크톱 의존성을 자동 설치하지는 않습니다.
+- 전원 설정에는 해당 버전의 `kwriteconfig5` 또는 `kwriteconfig6`, `busctl`, 실행 중인 PowerDevil 사용자 서비스가 필요합니다. `KDE_SESSION_VERSION`을 우선 확인하고, 없으면 `plasmashell --version`으로 판별합니다. 버전을 판별하지 못하면 설정을 쓰지 않습니다.
+- Plasma 5는 `powermanagementprofilesrc`를 사용하며 절전 시간은 밀리초, 화면 꺼짐 시간은 초입니다. Plasma 6은 `powerdevilrc`의 활성화 플래그와 초 단위 시간을 사용합니다. 두 경우 모두 `XDG_CONFIG_HOME`, 미지정 시 `~/.config` 아래에서 읽고 씁니다.
+- BC-250 데스크톱을 대상으로 **AC 전원 프로필만** 변경합니다. 배터리 프로필, 밝기, 화면 어둡게 하기, 화면 잠금 정책, 하드웨어 설정은 이 타이머로 변경하지 않습니다. KDE의 잠금 상태 전용 화면 꺼짐 시간은 별도로 적용될 수 있습니다.
+- `Never`는 해당 동작을 명시적으로 비활성화하며 새로고침 뒤에도 유지됩니다. 절전 시간을 지정하면 기존 종료·최대절전 동작 대신 RAM 절전을 사용합니다.
+- 저장 뒤 PowerDevil 사용자 D-Bus의 `refreshStatus`를 호출합니다. 도구 누락, 쓰기 실패, 새로고침 실패는 성공으로 처리하지 않습니다. 새로고침 실패 시 파일만 저장된 상태이며 나중에 서비스가 다시 읽으면 적용될 수 있습니다.
+- 설정이 없거나 읽을 수 없으면 KDE의 실제 기본값을 확정할 수 없습니다. 이때 보이는 절전 15분·화면 꺼짐 5분은 편집용 대체값입니다. 전체 적용을 누르면 화면에 보이는 값이 기록됩니다.
+
+기존 GNOME 동작과 동일하게 `Apply`와 `Save` 모두 데스크톱 타이머 설정을 영구 기록합니다. 두 버튼의 차이는 패널의 하드웨어 설정 저장에 해당합니다.
+
+KDE 회귀 테스트는 Plasma 5/6별 설정 예제, 명령 규약, 저장 후 재조회 동작을 확인합니다. 실제 Bazzite/KDE 기기의 절전·화면 꺼짐 실측 테스트를 대신하지는 않습니다.
+
+PowerDevil 참고: [Plasma 6 설정 정의](https://github.com/KDE/powerdevil/blob/master/PowerDevilProfileSettings.kcfg), [Plasma 5 → 6 변환 및 시간 단위](https://github.com/KDE/powerdevil/blob/master/daemon/powerdevilmigrateconfig.cpp).
 
 ### Apply와 Save
 
@@ -118,7 +141,7 @@ GUI의 CU 활성화 표시는 선택한 레지스터 값이 실제로 다시 읽
 
 ## 제거
 
-GNOME 앱 목록의 바로가기만 제거하려면:
+데스크톱 앱 목록의 바로가기만 제거하려면:
 
 ```bash
 ./uninstall-app.sh

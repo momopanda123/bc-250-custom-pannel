@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import configparser
 import os
+import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,17 +15,15 @@ POWER_SCHEMA = "org.gnome.settings-daemon.plugins.power"
 SESSION_SCHEMA = "org.gnome.desktop.session"
 SCREENSAVER_SCHEMA = "org.gnome.desktop.screensaver"
 
-# KDE Plasma (PowerDevil) keeps per-profile idle timeouts in
-# ~/.config/powermanagementprofilesrc. idleTime is in milliseconds
-# (e.g. "[AC][SuspendSession] idleTime=1800000"). Writes go through
-# kwriteconfig5/6, the standard CLI for KDE config files.
-KDE_CONFIG_FILE = "powermanagementprofilesrc"
-KDE_PROFILE_GROUP = "AC"
-KDE_SUSPEND_GROUP = "SuspendSession"
-KDE_DISPLAY_GROUP = "DPMSControl"
-KDE_IDLE_KEY = "idleTime"
-KDE_MS_PER_MINUTE = 60000
+# PowerDevil changed its schema in Plasma 6. Plasma 5's suspend timeout
+# is milliseconds, but DPMSControl is seconds. Plasma 6 uses seconds for both.
+KDE_CONFIG_FILES = {5: "powermanagementprofilesrc", 6: "powerdevilrc"}
+KDE_PROFILE_GROUP = "AC"  # BC-250 is an AC-powered desktop board.
 KDE_DEFAULT_SUSPEND_MINUTES = 30
+KDE_REFRESH = (
+    "--user", "call", "org.kde.Solid.PowerManagement",
+    "/org/kde/Solid/PowerManagement", "org.kde.Solid.PowerManagement", "refreshStatus",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +46,8 @@ class PowerController:
         desktop: str | None = None,
         config_home: Path | None = None,
         kwriteconfig: str | None = None,
+        plasma_version: int | None = None,
+        busctl: str | None = None,
     ) -> None:
         self.runner = runner
         self.cpuidle_driver = Path(cpuidle_driver)
@@ -59,87 +60,171 @@ class PowerController:
         else:
             self._config_home = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
         self._kwriteconfig = kwriteconfig
+        self._busctl = busctl
+        session_version = str(plasma_version) if plasma_version is not None else os.environ.get("KDE_SESSION_VERSION", "")
+        self._plasma_version = int(session_version) if session_version in ("5", "6") else None
+        self._version_checked = self._plasma_version is not None
 
     def _is_kde(self) -> bool:
-        return "kde" in self._desktop
+        return "kde" in self._desktop.split(":")
 
-    def _kwriteconfig_binary(self) -> str | None:
-        if self._kwriteconfig:
-            return self._kwriteconfig
-        return shutil.which("kwriteconfig6") or shutil.which("kwriteconfig5")
+    def _kde_version(self) -> int | None:
+        if not self._version_checked:
+            self._version_checked = True
+            # Installed Qt tools do not identify the running session: both
+            # versions may coexist. Prefer KDE_SESSION_VERSION, then Plasma.
+            binary = shutil.which("plasmashell")
+            if binary:
+                result = self.runner([binary, "--version"])
+                match = re.search(r"\bplasmashell\s+([56])\.", result.stdout) if result.ok else None
+                if match:
+                    self._plasma_version = int(match.group(1))
+        return self._plasma_version
 
-    def _kde_idle_ms(self, action_group: str) -> int | None:
-        """Read an idle timeout (milliseconds) from PowerDevil's config.
+    @staticmethod
+    def _kde_error(message: str) -> CommandResult:
+        # 126/127 are reserved by the UI for cancelled authentication.
+        return CommandResult(False, "", message, 1)
 
-        Returns None when the file, group, or key is missing/unparseable,
-        meaning "unknown" rather than "disabled".
-        """
-        parser = configparser.ConfigParser()
+    def _kde_tools(self) -> tuple[str, str] | CommandResult:
+        version = self._kde_version()
+        if version is None:
+            return self._kde_error("Cannot identify Plasma 5 or 6; no KDE power settings were changed")
+        writer = self._kwriteconfig or shutil.which(f"kwriteconfig{version}")
+        if not writer:
+            return self._kde_error(f"KDE power settings need kwriteconfig{version}, which was not found")
+        bus = self._busctl or shutil.which("busctl")
+        if not bus:
+            return self._kde_error("KDE power settings need busctl to refresh PowerDevil; no settings were changed")
+        return writer, bus
+
+    def _kde_write_many(self, settings: Sequence[tuple[str, str, str]]) -> CommandResult:
+        tools = self._kde_tools()
+        if isinstance(tools, CommandResult):
+            return tools
+        writer, bus = tools
+        config_path = self._config_home / KDE_CONFIG_FILES[self._kde_version()]
+        for group, key, value in settings:
+            result = self.runner([
+                writer, "--file", str(config_path), "--group", KDE_PROFILE_GROUP,
+                "--group", group, "--key", key, value,
+            ])
+            if not result.ok:
+                return self._kde_error(
+                    f"Could not write KDE power setting {group}/{key}: "
+                    f"{result.stderr or result.stdout}. Settings may be partially saved."
+                )
+        # kwriteconfig only saves a file. refreshStatus reparses and reloads the
+        # active profile on both Plasma 5 and 6 (same call as KDE's settings UI).
+        result = self.runner([bus, *KDE_REFRESH])
+        if not result.ok:
+            return self._kde_error(
+                "KDE power settings were saved, but PowerDevil could not apply them: "
+                + (result.stderr or result.stdout or "session D-Bus call failed")
+            )
+        return CommandResult(True, result.stdout, "", 0)
+
+    def _kde_read_config(self) -> configparser.ConfigParser:
+        parser = configparser.ConfigParser(interpolation=None, strict=False)
+        parser.optionxform = str
+        version = self._kde_version()
+        if version is not None:
+            try:
+                parser.read(self._config_home / KDE_CONFIG_FILES[version], encoding="utf-8")
+            except (OSError, UnicodeError, configparser.Error):
+                return configparser.ConfigParser(interpolation=None)
+        return parser
+
+    @staticmethod
+    def _kde_value(parser: configparser.ConfigParser, group: str, key: str) -> str | None:
+        return parser.get(f"{KDE_PROFILE_GROUP}][{group}", key, fallback=None)
+
+    @staticmethod
+    def _kde_int(value: str | None) -> int | None:
         try:
-            found = parser.read(self._config_home / KDE_CONFIG_FILE, encoding="utf-8")
-        except (OSError, configparser.Error):
-            return None
-        if not found:
-            return None
-        section = f"{KDE_PROFILE_GROUP}][{action_group}"
-        try:
-            raw = parser.get(section, KDE_IDLE_KEY)
-        except (configparser.NoSectionError, configparser.NoOptionError):
-            return None
-        try:
-            return int(raw.strip())
+            return int(value) if value is not None else None
         except ValueError:
             return None
 
-    def _kde_set_idle(self, action_group: str, minutes: int | None) -> CommandResult:
-        """Write an idle timeout via kwriteconfig.
-
-        minutes=None deletes the key, which disables that idle action.
-        kwriteconfig notifies KDE's config system, so a running PowerDevil
-        picks the change up without a restart.
-        """
-        binary = self._kwriteconfig_binary()
-        if binary is None:
-            return CommandResult(
-                False,
-                "",
-                "KDE power settings need kwriteconfig5/6, which was not found",
-                127,
-            )
-        argv = [
-            binary,
-            "--file", KDE_CONFIG_FILE,
-            "--group", KDE_PROFILE_GROUP,
-            "--group", action_group,
-            "--key", KDE_IDLE_KEY,
-        ]
-        if minutes is None:
-            argv.append("--delete")
-        else:
-            argv.append(str(minutes * KDE_MS_PER_MINUTE))
-        return self.runner(argv)
+    @staticmethod
+    def _kde_minutes(timeout: int | None, units_per_minute: int) -> int | None:
+        if timeout is None or timeout < 0:
+            return None
+        # Do not round a positive sub-minute timeout down to the "Never" value.
+        return 0 if timeout == 0 else max(1, (timeout + units_per_minute - 1) // units_per_minute)
 
     def _kde_inspect(self) -> PowerState:
-        suspend_ms = self._kde_idle_ms(KDE_SUSPEND_GROUP)
-        display_ms = self._kde_idle_ms(KDE_DISPLAY_GROUP)
-        if suspend_ms is None:
-            suspend_blocked, suspend_minutes = False, None
-        else:
-            suspend_blocked = suspend_ms <= 0
-            suspend_minutes = 0 if suspend_blocked else suspend_ms // KDE_MS_PER_MINUTE
-        if display_ms is None:
-            display_blocked, display_minutes = False, None
-        else:
-            display_blocked = display_ms <= 0
-            display_minutes = 0 if display_blocked else display_ms // KDE_MS_PER_MINUTE
+        parser = self._kde_read_config()
+        version = self._kde_version()
+        suspend_minutes = display_minutes = None
+        if version == 5:
+            action = self._kde_int(self._kde_value(parser, "SuspendSession", "suspendType"))
+            timeout = self._kde_int(self._kde_value(parser, "SuspendSession", "idleTime"))
+            if action == 0 or timeout == 0:
+                suspend_minutes = 0
+            elif action == 1:
+                suspend_minutes = self._kde_minutes(timeout, 60000)
+            display_minutes = self._kde_minutes(
+                self._kde_int(self._kde_value(parser, "DPMSControl", "idleTime")), 60,
+            )
+        elif version == 6:
+            action = self._kde_int(self._kde_value(parser, "SuspendAndShutdown", "AutoSuspendAction"))
+            timeout = self._kde_int(self._kde_value(parser, "SuspendAndShutdown", "AutoSuspendIdleTimeoutSec"))
+            if action == 0:
+                suspend_minutes = 0
+            elif action == 1 and timeout is not None and timeout > 0:
+                suspend_minutes = self._kde_minutes(timeout, 60)
+            enabled = self._kde_value(parser, "Display", "TurnOffDisplayWhenIdle")
+            if enabled is not None and enabled.strip().lower() in ("false", "0", "no", "off"):
+                display_minutes = 0
+            elif enabled is not None and enabled.strip().lower() in ("true", "1", "yes", "on"):
+                timeout = self._kde_int(self._kde_value(parser, "Display", "TurnOffDisplayIdleTimeoutSec"))
+                if timeout is not None and timeout > 0:
+                    display_minutes = self._kde_minutes(timeout, 60)
         return PowerState(
             cpu_idle_mode=self._cpu_idle_mode(),
             gpu_dpm_mode=self._gpu_dpm_mode(),
-            suspend_blocked=suspend_blocked,
-            display_blank_blocked=display_blocked,
+            suspend_blocked=suspend_minutes == 0,
+            display_blank_blocked=display_minutes == 0,
             suspend_minutes=suspend_minutes,
             display_minutes=display_minutes,
         )
+
+    def _kde_set_suspend(self, minutes: int) -> CommandResult:
+        version = self._kde_version()
+        if version == 5:
+            settings = [
+                ("SuspendSession", "suspendType", "0"),
+                ("SuspendSession", "idleTime", str(minutes * 60000)),
+            ]
+            if minutes:
+                settings.extend([
+                    ("SuspendSession", "suspendThenHibernate", "false"),
+                    ("SuspendSession", "suspendType", "1"),
+                ])
+        else:
+            settings = [
+                ("SuspendAndShutdown", "AutoSuspendAction", "0"),
+                ("SuspendAndShutdown", "AutoSuspendIdleTimeoutSec", str(minutes * 60)),
+            ]
+            if minutes:
+                settings.extend([
+                    ("SuspendAndShutdown", "SleepMode", "1"),
+                    ("SuspendAndShutdown", "AutoSuspendAction", "1"),
+                ])
+        return self._kde_write_many(settings)
+
+    def _kde_set_display(self, minutes: int) -> CommandResult:
+        if self._kde_version() == 5:
+            settings = [("DPMSControl", "idleTime", str(minutes * 60))]
+        else:
+            settings = [
+                ("Display", "TurnOffDisplayWhenIdle", "false"),
+                ("Display", "TurnOffDisplayIdleTimeoutSec", str(minutes * 60)),
+            ]
+            if minutes:
+                settings.append(("Display", "TurnOffDisplayWhenIdle", "true"))
+        return self._kde_write_many(settings)
 
     @staticmethod
     def _read(path: Path) -> str:
@@ -218,9 +303,7 @@ class PowerController:
 
     def set_suspend_blocked(self, blocked: bool) -> CommandResult:
         if self._is_kde():
-            # KDE has no separate "type" switch: the timeout itself is the
-            # switch. Re-enabling without a known previous timeout falls back
-            # to a 30 minute default.
+            # This convenience toggle uses a documented 30-minute resume default.
             return self.set_suspend_timeout(0 if blocked else KDE_DEFAULT_SUSPEND_MINUTES)
         value = "nothing" if blocked else "suspend"
         return self._set_many(
@@ -240,7 +323,7 @@ class PowerController:
     def set_suspend_timeout(self, minutes: int) -> CommandResult:
         minutes = self._validate_timeout_minutes(minutes)
         if self._is_kde():
-            return self._kde_set_idle(KDE_SUSPEND_GROUP, None if minutes == 0 else minutes)
+            return self._kde_set_suspend(minutes)
         mode = "nothing" if minutes == 0 else "suspend"
         seconds = str(minutes * 60)
         return self._set_many(
@@ -255,7 +338,7 @@ class PowerController:
     def set_display_timeout(self, minutes: int) -> CommandResult:
         minutes = self._validate_timeout_minutes(minutes)
         if self._is_kde():
-            return self._kde_set_idle(KDE_DISPLAY_GROUP, None if minutes == 0 else minutes)
+            return self._kde_set_display(minutes)
         idle_delay, screensaver, idle_dim = (
             ("uint32 0", "false", "false")
             if minutes == 0
